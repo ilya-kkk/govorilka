@@ -1,0 +1,14 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: english-voice-bot:local
+    container_name: english-voice-bot
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 20s
