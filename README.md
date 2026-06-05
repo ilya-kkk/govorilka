@@ -128,6 +128,215 @@ docker compose down
 
 Compose uses `./data:/app/data`, so the SQLite database stays on the host.
 
+## Architecture Flow
+
+```mermaid
+flowchart TD
+    %% ============================================================
+    %% APPLICATION BOOT
+    %% ============================================================
+
+    subgraph BOOT["1. Запуск приложения"]
+        A["python -m english_voice_bot.main"] --> B["run()"]
+        B --> C["asyncio.run(main())"]
+        C --> D["Settings()<br/>Чтение .env и значений по умолчанию"]
+        D --> E["create_engine(database_url)<br/>SQLite + aiosqlite"]
+        E --> F["init_db(engine)<br/>Base.metadata.create_all()"]
+        F --> G["create_session_factory(engine)"]
+        G --> H["Bot(token) + Dispatcher()"]
+        H --> I["include_router(commands.router)"]
+        I --> J["include_router(callbacks.router)"]
+        J --> K["include_router(dialogue.router)"]
+        K --> L["OpenRouterClient(...)<br/>chat_model + stt_model + tts_model"]
+        L --> M["bot.delete_webhook(drop_pending_updates=True)"]
+        M --> N["dispatcher.start_polling(...)<br/>settings, session_factory,<br/>openrouter_client передаются в handlers"]
+    end
+
+    %% ============================================================
+    %% UPDATE ROUTING
+    %% ============================================================
+
+    N --> UPDATE["Telegram Update"]
+    UPDATE --> ROUTER{"Какой update<br/>пришёл?"}
+
+    ROUTER -->|"/start или /help"| INTRO
+    ROUTER -->|"Voice message"| VOICE_GUARD
+    ROUTER -->|"Обычный text message"| TEXT_FILTER
+    ROUTER -->|"/review или кнопка<br/>🔍 Find my mistakes"| REVIEW_GUARD
+    ROUTER -->|"/reset"| RESET_GUARD
+    ROUTER -->|"Inline callback<br/>dialogue:reset"| CALLBACK_ACK
+
+    %% ============================================================
+    %% ACCESS GUARD
+    %% ============================================================
+
+    subgraph ACCESS["2. Проверка доступа"]
+        INTRO["start_command() / help_command()"] --> INTRO_GUARD{"Private chat?<br/>User ID разрешён?"}
+        VOICE_GUARD{"Private chat?<br/>User ID разрешён?"}
+        TEXT_GUARD{"Private chat?<br/>User ID разрешён?"}
+        REVIEW_GUARD{"Private chat?<br/>User ID разрешён?"}
+        RESET_GUARD{"Private chat?<br/>User ID разрешён?"}
+
+        INTRO_GUARD -->|Нет| REJECT["Ответ:<br/>Please open a private chat...<br/>или This bot is private."]
+        VOICE_GUARD -->|Нет| REJECT
+        TEXT_GUARD -->|Нет| REJECT
+        REVIEW_GUARD -->|Нет| REJECT
+        RESET_GUARD -->|Нет| REJECT
+
+        INTRO_GUARD -->|Да| INTRO_REPLY["Показать инструкцию<br/>и reply keyboard"]
+    end
+
+    %% ============================================================
+    %% TEXT INPUT
+    %% ============================================================
+
+    subgraph TEXT_PATH["3A. Обработка текстового сообщения"]
+        TEXT_FILTER{"Текст начинается с /<br/>или равен кнопке review?"}
+        TEXT_FILTER -->|Да| TEXT_IGNORE["return<br/>Команду обработает другой router"]
+        TEXT_FILTER -->|Нет| TEXT_GUARD
+        TEXT_GUARD -->|Да| TEXT_NORMALIZE["message.text.strip()"]
+        TEXT_NORMALIZE --> PREPARE_REPLY_TEXT["message.answer:<br/>💬 Preparing a reply..."]
+        PREPARE_REPLY_TEXT --> COMMON_PROCESS
+    end
+
+    %% ============================================================
+    %% VOICE INPUT AND STT
+    %% ============================================================
+
+    subgraph VOICE_PATH["3B. Обработка голосового сообщения"]
+        VOICE_GUARD -->|Да| STATUS["message.answer:<br/>🎧 Transcribing..."]
+
+        STATUS --> DOWNLOAD["bot.download(file_id)<br/>в io.BytesIO"]
+        DOWNLOAD --> DOWNLOAD_OK{"Telegram download<br/>успешен?"}
+
+        DOWNLOAD_OK -->|Нет| DOWNLOAD_ERROR["Отредактировать status:<br/>⚠️ I could not download..."]
+        DOWNLOAD_OK -->|Да| AUDIO_MEMORY["audio_bytes: OGG<br/>только в оперативной памяти"]
+
+        AUDIO_MEMORY --> STT["OpenRouterClient.transcribe_ogg(audio_bytes)"]
+        STT --> STT_PAYLOAD["base64(audio_bytes)<br/>POST /audio/transcriptions<br/>model + input_audio.data + format=ogg"]
+        STT_PAYLOAD --> STT_RETRY["Общий HTTP retry-механизм:<br/>до 3 попыток<br/>при network error, 429 и 5xx<br/>задержки 0.5s → 1.0s"]
+        STT_RETRY --> STT_RESULT{"Получен корректный<br/>непустой transcript?"}
+
+        STT_RESULT -->|"OpenRouterError"| STT_ERROR["Отредактировать status:<br/>⚠️ I could not transcribe..."]
+        STT_RESULT -->|"Пустая строка"| EMPTY_ERROR["Отредактировать status:<br/>⚠️ I could not hear any speech clearly..."]
+        STT_RESULT -->|Да| DELETE_STATUS["Удалить временный status"]
+
+        DELETE_STATUS --> FORMAT_TRANSCRIPT["format_transcription(transcription)<br/>HTML blockquote"]
+        FORMAT_TRANSCRIPT --> SEND_TRANSCRIPT["message.reply:<br/>📝 I understood: transcript"]
+        SEND_TRANSCRIPT --> PREPARE_REPLY_VOICE["message.answer:<br/>💬 Preparing a reply..."]
+        PREPARE_REPLY_VOICE --> COMMON_PROCESS
+    end
+
+    %% ============================================================
+    %% COMMON USER MESSAGE PROCESSING
+    %% ============================================================
+
+    subgraph COMMON["4. Общий pipeline после получения текста"]
+        COMMON_PROCESS["_process_user_message(<br/>content, source_type=text|voice<br/>)"]
+
+        COMMON_PROCESS --> DB_SCOPE["Открыть session_scope(session_factory)"]
+        DB_SCOPE --> FIND_SESSION["SELECT ChatSession<br/>WHERE telegram_chat_id = chat.id<br/>AND telegram_user_id = from_user.id"]
+
+        FIND_SESSION --> SESSION_EXISTS{"Сессия уже есть?"}
+        SESSION_EXISTS -->|Да| UPDATE_SESSION["Обновить session.updated_at"]
+        SESSION_EXISTS -->|Нет| CREATE_SESSION["INSERT ChatSession"]
+
+        UPDATE_SESSION --> ADD_USER
+        CREATE_SESSION --> ADD_USER
+
+        ADD_USER["INSERT DialogueMessage<br/>role = user<br/>source_type = voice | text<br/>content = user text<br/>telegram_message_id = incoming message ID"]
+        ADD_USER --> COMMIT_USER["db.commit()<br/>Сообщение пользователя сохранено"]
+
+        COMMIT_USER --> GET_CONTEXT["SELECT последние N сообщений<br/>ORDER BY id DESC LIMIT max_context_messages<br/>затем reverse()"]
+        GET_CONTEXT --> BUILD_PROMPT["build_chat_messages(history)<br/>system prompt + user/assistant history"]
+
+        BUILD_PROMPT --> CHAT_COMPLETION["OpenRouterClient.chat_completion(...,<br/>temperature=0.7)"]
+        CHAT_COMPLETION --> CHAT_HTTP["POST /chat/completions<br/>model + messages + temperature"]
+        CHAT_HTTP --> CHAT_RETRY["Общий HTTP retry-механизм:<br/>до 3 попыток при network error,<br/>429 и 5xx"]
+        CHAT_RETRY --> CHAT_RESULT{"Получен assistant_text?"}
+
+        CHAT_RESULT -->|Нет| CHAT_ERROR["Отредактировать status:<br/>⚠️ I could not generate a reply...<br/><br/>User message остаётся в БД"]
+        CHAT_RESULT -->|Да| ADD_ASSISTANT["INSERT DialogueMessage<br/>role = assistant<br/>source_type = generated<br/>content = assistant_text"]
+
+        ADD_ASSISTANT --> COMMIT_ASSISTANT["db.commit()<br/>Ответ ассистента сохранён"]
+        COMMIT_ASSISTANT --> CLOSE_DB["Закрыть session_scope"]
+    end
+
+    %% ============================================================
+    %% TTS AND TELEGRAM RESPONSE
+    %% ============================================================
+
+    subgraph RESPONSE["5. Генерация и отправка ответа"]
+        CLOSE_DB --> SEND_RESPONSE["send_assistant_response(...)"]
+
+        SEND_RESPONSE --> TTS["OpenRouterClient.synthesize_speech_mp3(assistant_text)"]
+        TTS --> TTS_PAYLOAD["POST /audio/speech<br/>model + input + voice<br/>response_format=mp3 + speed"]
+        TTS_PAYLOAD --> TTS_RETRY["Общий HTTP retry-механизм:<br/>до 3 попыток при network error,<br/>429 и 5xx"]
+        TTS_RETRY --> TTS_RESULT{"Получены MP3 bytes?"}
+
+        TTS_RESULT -->|Да| SEND_VOICE["message.answer_voice(<br/>BufferedInputFile(answer.mp3)<br/>)"]
+        SEND_VOICE --> VOICE_SENT{"Telegram принял<br/>voice message?"}
+
+        VOICE_SENT -->|Да| FORMAT_SPOILER["format_spoiler_text(assistant_text)<br/>&lt;tg-spoiler&gt;...&lt;/tg-spoiler&gt;"]
+        FORMAT_SPOILER --> SEND_SPOILER["message.answer:<br/>скрытый письменный ответ<br/>+ inline-кнопка 🧹 Reset dialogue"]
+        SEND_SPOILER --> DELETE_REPLY_STATUS["Удалить status:<br/>💬 Preparing a reply..."]
+
+        VOICE_SENT -->|Нет| FALLBACK_TEXT
+        TTS_RESULT -->|"OpenRouterError"| FALLBACK_TEXT
+
+        FALLBACK_TEXT["Добавить предупреждение:<br/>⚠️ Voice generation failed,<br/>so I sent only the written answer."]
+        FALLBACK_TEXT --> SEND_FALLBACK["message.answer:<br/>spoiler text + warning<br/>+ reply keyboard"]
+        SEND_FALLBACK --> DELETE_REPLY_STATUS
+    end
+
+    %% ============================================================
+    %% REVIEW FLOW
+    %% ============================================================
+
+    subgraph REVIEW["6. Review-flow: поиск ошибок"]
+        REVIEW_GUARD -->|Да| REVIEW_STATUS["message.answer:<br/>🔎 Checking your messages..."]
+        REVIEW_STATUS --> REVIEW_SCOPE["Открыть session_scope"]
+        REVIEW_SCOPE --> REVIEW_SESSION["get_or_create_session(chat_id, user_id)<br/>db.commit()"]
+
+        REVIEW_SESSION --> GET_UNREVIEWED["SELECT DialogueMessage<br/>WHERE role = user<br/>AND reviewed_at IS NULL<br/>ORDER BY id ASC<br/>LIMIT max_review_messages"]
+
+        GET_UNREVIEWED --> HAS_UNREVIEWED{"Есть новые сообщения?"}
+
+        HAS_UNREVIEWED -->|Нет| DELETE_REVIEW_STATUS_EMPTY["Удалить status:<br/>🔎 Checking your messages..."]
+        DELETE_REVIEW_STATUS_EMPTY --> NO_REVIEW["Ответ:<br/>✅ You have no new messages to review."]
+        HAS_UNREVIEWED -->|Да| REVIEW_CONTEXT["Загрузить контекст вокруг целей:<br/>±3 сообщения около каждого<br/>unreviewed user message"]
+
+        REVIEW_CONTEXT --> REVIEW_PROMPT["build_review_prompt(...)<br/>Целевые сообщения получают<br/>маркер REVIEW_TARGET"]
+        REVIEW_PROMPT --> REVIEW_LLM["OpenRouterClient.chat_completion(<br/>system review prompt + dialogue,<br/>temperature=0.3<br/>)"]
+
+        REVIEW_LLM --> REVIEW_RESULT{"LLM ответил?"}
+        REVIEW_RESULT -->|Нет| REVIEW_ROLLBACK["db.rollback()<br/>Отредактировать status:<br/>⚠️ I could not generate a review..."]
+        REVIEW_RESULT -->|Да| FORMAT_REPORT["format_review_report(report)<br/>Преобразование в Telegram MarkdownV2"]
+
+        FORMAT_REPORT --> SPLIT_REPORT["split_telegram_html(...,<br/>safe limit = 3900 chars<br/>)"]
+        SPLIT_REPORT --> DELETE_REVIEW_STATUS["Удалить status:<br/>🔎 Checking your messages..."]
+        DELETE_REVIEW_STATUS --> SEND_CHUNKS["Отправить каждый chunk<br/>в Telegram<br/>parse_mode=MarkdownV2"]
+        SEND_CHUNKS --> MARK_REVIEWED["UPDATE выбранных user messages<br/>SET reviewed_at = utc_now()"]
+        MARK_REVIEWED --> REVIEW_COMMIT["db.commit()"]
+    end
+
+    %% ============================================================
+    %% RESET FLOW
+    %% ============================================================
+
+    subgraph RESET["7. Сброс диалога"]
+        RESET_GUARD -->|Да| RESET_SCOPE["Открыть session_scope"]
+        CALLBACK_ACK["callback.answer()"] --> CALLBACK_GUARD{"User ID разрешён?"}
+        CALLBACK_GUARD -->|Нет| REJECT_CALLBACK["Ответ:<br/>This bot is private."]
+        CALLBACK_GUARD -->|Да| RESET_SCOPE
+
+        RESET_SCOPE --> RESET_SESSION["get_or_create_session(chat_id, user_id)"]
+        RESET_SESSION --> DELETE_HISTORY["DELETE DialogueMessage<br/>WHERE session_id = current session"]
+        DELETE_HISTORY --> RESET_COMMIT["db.commit()"]
+        RESET_COMMIT --> RESET_REPLY["Ответ:<br/>🧹 Dialogue history cleared.<br/>Removed N messages."]
+    end
+```
+
 ## Review Cursor
 
 Learner messages are stored in `dialogue_messages` with `reviewed_at = NULL`. `/review` and the `🔍 Find my mistakes` reply button select only unreviewed user messages, send them to the review prompt, and mark those exact user-message rows as reviewed only after the report is successfully sent to Telegram.

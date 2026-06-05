@@ -33,6 +33,7 @@ DOWNLOAD_ERROR = "⚠️ I could not download the voice message. Please try agai
 STT_ERROR = "⚠️ I could not transcribe that message. Please record it again."
 EMPTY_TRANSCRIPTION_ERROR = "⚠️ I could not hear any speech clearly. Please try again."
 LLM_ERROR = "⚠️ I could not generate a reply. Please try again in a moment."
+GENERATING_REPLY_STATUS = "💬 Preparing a reply..."
 
 
 @router.message(F.voice)
@@ -67,6 +68,7 @@ async def voice_message_handler(
 
     await _safe_delete_status(status)
     await message.reply(format_transcription(transcription), parse_mode=ParseMode.HTML)
+    reply_status = await message.answer(GENERATING_REPLY_STATUS)
     await _process_user_message(
         message=message,
         settings=settings,
@@ -74,6 +76,7 @@ async def voice_message_handler(
         openrouter_client=openrouter_client,
         content=transcription,
         source_type=SOURCE_VOICE,
+        status=reply_status,
     )
 
 
@@ -93,6 +96,7 @@ async def text_message_handler(
     if not message.text or not message.text.strip():
         return
 
+    status = await message.answer(GENERATING_REPLY_STATUS)
     await _process_user_message(
         message=message,
         settings=settings,
@@ -100,6 +104,7 @@ async def text_message_handler(
         openrouter_client=openrouter_client,
         content=message.text.strip(),
         source_type=SOURCE_TEXT,
+        status=status,
     )
 
 
@@ -119,6 +124,7 @@ async def _process_user_message(
     openrouter_client: OpenRouterClient,
     content: str,
     source_type: str,
+    status: Message | None = None,
 ) -> None:
     async with session_scope(session_factory) as db:
         session = await get_or_create_session(
@@ -145,7 +151,10 @@ async def _process_user_message(
             )
         except OpenRouterError:
             logger.exception("Chat completion failed")
-            await message.answer(LLM_ERROR)
+            if status is not None:
+                await _safe_edit_status(status, LLM_ERROR)
+            else:
+                await message.answer(LLM_ERROR)
             return
 
         await add_dialogue_message(
@@ -163,6 +172,8 @@ async def _process_user_message(
         assistant_text=assistant_text,
         openrouter_client=openrouter_client,
     )
+    if status is not None:
+        await _safe_delete_status(status)
 
 
 async def _safe_edit_status(status: Message, text: str) -> None:
