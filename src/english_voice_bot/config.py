@@ -22,6 +22,8 @@ class Settings(BaseSettings):
 
     max_context_messages: int = Field(default=30, ge=1, le=200)
     max_review_messages: int = Field(default=100, ge=1, le=500)
+    reminder_timezone: str = "UTC"
+    reminder_check_interval_seconds: int = Field(default=30, ge=5, le=3600)
 
     allowed_telegram_user_ids: Annotated[frozenset[int], NoDecode] = Field(
         default_factory=frozenset

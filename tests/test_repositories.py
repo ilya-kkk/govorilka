@@ -5,17 +5,28 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from english_voice_bot.models import DialogueMessage
 from english_voice_bot.repositories import (
+    PENDING_ACTION_REMINDER_SETUP,
     ROLE_ASSISTANT,
     ROLE_USER,
     SOURCE_GENERATED,
     SOURCE_TEXT,
     add_dialogue_message,
+    clear_pending_user_action,
+    clear_reminder_schedule_draft,
     clear_session_dialogue,
     count_session_messages,
+    get_pending_user_action,
+    get_reminder_schedule_draft,
+    get_reminder_schedule,
     get_or_create_session,
     get_recent_conversation_context,
     get_unreviewed_user_messages,
+    list_enabled_reminder_schedules,
     mark_messages_reviewed,
+    set_pending_user_action,
+    upsert_reminder_schedule_draft,
+    update_reminder_last_sent_slot,
+    upsert_reminder_schedule,
 )
 
 
@@ -146,3 +157,86 @@ async def test_clear_session_deletes_dialogue(
 
     assert deleted == 1
     assert remaining == 0
+
+
+async def test_pending_user_action_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
+        await set_pending_user_action(
+            db,
+            telegram_chat_id=10,
+            telegram_user_id=20,
+            action=PENDING_ACTION_REMINDER_SETUP,
+        )
+        pending = await get_pending_user_action(db, telegram_chat_id=10, telegram_user_id=20)
+        deleted = await clear_pending_user_action(
+            db,
+            telegram_chat_id=10,
+            telegram_user_id=20,
+            action=PENDING_ACTION_REMINDER_SETUP,
+        )
+        missing = await get_pending_user_action(db, telegram_chat_id=10, telegram_user_id=20)
+
+    assert pending is not None
+    assert pending.action == PENDING_ACTION_REMINDER_SETUP
+    assert deleted == 1
+    assert missing is None
+
+
+async def test_reminder_schedule_upsert_and_last_sent_slot(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
+        created = await upsert_reminder_schedule(
+            db,
+            telegram_chat_id=10,
+            telegram_user_id=20,
+            timezone="UTC",
+            schedule_json='{"days":[]}',
+        )
+        await upsert_reminder_schedule(
+            db,
+            telegram_chat_id=10,
+            telegram_user_id=20,
+            timezone="UTC",
+            schedule_json='{"days":[1]}',
+        )
+        await update_reminder_last_sent_slot(db, schedule_id=created.id, last_sent_slot="2026-06-18:09:00")
+        found = await get_reminder_schedule(db, telegram_chat_id=10, telegram_user_id=20)
+        enabled = await list_enabled_reminder_schedules(db)
+
+    assert found is not None
+    assert found.id == created.id
+    assert found.schedule_json == '{"days":[1]}'
+    assert found.last_sent_slot == "2026-06-18:09:00"
+    assert [schedule.id for schedule in enabled] == [created.id]
+
+
+async def test_reminder_schedule_draft_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
+        created = await upsert_reminder_schedule_draft(
+            db,
+            telegram_chat_id=10,
+            telegram_user_id=20,
+            timezone="Europe/Moscow",
+            schedule_json='{"draft":1}',
+        )
+        updated = await upsert_reminder_schedule_draft(
+            db,
+            telegram_chat_id=10,
+            telegram_user_id=20,
+            timezone="Europe/Moscow",
+            schedule_json='{"draft":2}',
+        )
+        found = await get_reminder_schedule_draft(db, telegram_chat_id=10, telegram_user_id=20)
+        deleted = await clear_reminder_schedule_draft(db, telegram_chat_id=10, telegram_user_id=20)
+        missing = await get_reminder_schedule_draft(db, telegram_chat_id=10, telegram_user_id=20)
+
+    assert updated.id == created.id
+    assert found is not None
+    assert found.schedule_json == '{"draft":2}'
+    assert deleted == 1
+    assert missing is None

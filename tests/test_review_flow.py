@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import pytest
-from aiogram.types import InlineKeyboardMarkup, ReplyKeyboardMarkup
+from aiogram.types import ReplyKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from english_voice_bot.keyboards import REVIEW_BUTTON_TEXT
+from english_voice_bot.keyboards import (
+    CONFIRM_REMINDERS_BUTTON_TEXT,
+    RESET_BUTTON_TEXT,
+    REVIEW_BUTTON_TEXT,
+    SETTINGS_BUTTON_TEXT,
+    reminder_confirmation_keyboard,
+)
 from english_voice_bot.models import DialogueMessage
 from english_voice_bot.repositories import (
     ROLE_ASSISTANT,
@@ -46,6 +52,13 @@ class FakeMessage:
         self.answer_calls.append({"text": text, **kwargs})
 
 
+def test_reminder_confirmation_keyboard() -> None:
+    markup = reminder_confirmation_keyboard()
+
+    assert markup.inline_keyboard[0][0].text == CONFIRM_REMINDERS_BUTTON_TEXT
+    assert markup.inline_keyboard[0][0].callback_data == "settings:reminders:confirm"
+
+
 async def test_tts_failure_fallback_sends_hidden_written_answer() -> None:
     message = FakeMessage()
 
@@ -64,9 +77,11 @@ async def test_tts_failure_fallback_sends_hidden_written_answer() -> None:
     reply_markup = message.answer_calls[0]["reply_markup"]
     assert isinstance(reply_markup, ReplyKeyboardMarkup)
     assert reply_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
+    assert reply_markup.keyboard[0][1].text == SETTINGS_BUTTON_TEXT
+    assert reply_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
 
 
-async def test_tts_success_sets_reply_keyboard_and_reset_inline_action() -> None:
+async def test_tts_success_sets_reply_keyboard_on_voice_and_text() -> None:
     message = FakeMessage()
 
     voice_sent = await send_assistant_response(
@@ -82,11 +97,15 @@ async def test_tts_success_sets_reply_keyboard_and_reset_inline_action() -> None
     voice_markup = message.voice_calls[0]["reply_markup"]
     assert isinstance(voice_markup, ReplyKeyboardMarkup)
     assert voice_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
+    assert voice_markup.keyboard[0][1].text == SETTINGS_BUTTON_TEXT
+    assert voice_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
 
     assert len(message.answer_calls) == 1
     text_markup = message.answer_calls[0]["reply_markup"]
-    assert isinstance(text_markup, InlineKeyboardMarkup)
-    assert text_markup.inline_keyboard[0][0].text == "🧹 Reset dialogue"
+    assert isinstance(text_markup, ReplyKeyboardMarkup)
+    assert text_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
+    assert text_markup.keyboard[0][1].text == SETTINGS_BUTTON_TEXT
+    assert text_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
 
 
 async def test_review_failure_does_not_mark_messages_reviewed(

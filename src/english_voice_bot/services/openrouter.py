@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -79,6 +80,42 @@ class OpenRouterClient:
         if not isinstance(content, str) or not content.strip():
             raise OpenRouterError("Empty chat completion response")
         return content.strip()
+
+    async def chat_completion_json_schema(
+        self,
+        messages: Sequence[dict[str, str]],
+        *,
+        schema_name: str,
+        schema: dict[str, Any],
+        temperature: float = 0.1,
+    ) -> dict[str, Any]:
+        payload = {
+            "model": self._chat_model,
+            "messages": list(messages),
+            "temperature": temperature,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+        }
+        data = await self._post_json("/chat/completions", payload)
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise OpenRouterError("Malformed structured completion response") from exc
+        if not isinstance(content, str) or not content.strip():
+            raise OpenRouterError("Empty structured completion response")
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise OpenRouterError("Structured completion returned invalid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise OpenRouterError("Structured completion returned non-object JSON")
+        return parsed
 
     async def transcribe_ogg(self, audio_bytes: bytes) -> str:
         encoded_audio = base64.b64encode(audio_bytes).decode("ascii")

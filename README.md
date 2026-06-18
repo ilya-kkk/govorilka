@@ -9,8 +9,9 @@ A personal Telegram bot for practicing spoken English. Send a voice message, get
 - Friendly conversation replies through an OpenRouter chat model.
 - Text-to-Speech replies through OpenRouter, sent back as Telegram voice messages.
 - Hidden assistant text using Telegram spoiler formatting.
-- Reply keyboard action: `🔍 Find my mistakes`.
-- Inline action: `🧹 Reset dialogue`.
+- Reply keyboard actions: `🔍`, `⚙️`, `🧹`.
+- `/settings` reminder setup with OpenRouter structured JSON output.
+- Background Telegram reminders for saved practice schedules.
 - Local SQLite persistence with SQLAlchemy async API.
 - No permanent audio storage.
 
@@ -64,6 +65,29 @@ The default TTS model is configured to an OpenRouter speech model currently retu
 OPENROUTER_TTS_MODEL=hexgrad/kokoro-82m
 OPENROUTER_TTS_VOICE=af_heart
 ```
+
+Reminder times are interpreted in `REMINDER_TIMEZONE` and checked by the background scheduler:
+
+```env
+REMINDER_TIMEZONE=UTC
+REMINDER_CHECK_INTERVAL_SECONDS=30
+```
+
+## Reminder Settings
+
+Use `/settings`, press `⏰ Настроить напоминания`, then describe the schedule in normal text.
+
+Examples:
+
+```text
+каждый день утром и вечером
+по вторникам и пятницам в 19:30
+два раза в неделю вечером
+```
+
+The bot asks OpenRouter for a strict JSON Schema response, validates the returned JSON locally,
+shows the day-by-day plan with a `✅ Да, подтвердить` inline button, and saves it in SQLite only
+after confirmation.
 
 ## Install Dependencies
 
@@ -149,11 +173,13 @@ flowchart TD
         F --> G["create_session_factory(engine)"]
         G --> H["Bot(token) + Dispatcher()"]
         H --> I["include_router(commands.router)"]
-        I --> J["include_router(callbacks.router)"]
-        J --> K["include_router(dialogue.router)"]
-        K --> L["OpenRouterClient(...)<br/>chat_model + stt_model + tts_model"]
-        L --> M["bot.delete_webhook(drop_pending_updates=True)"]
-        M --> N["dispatcher.start_polling(...)<br/>settings, session_factory,<br/>openrouter_client передаются в handlers"]
+        I --> J["include_router(settings.router)"]
+        J --> K["include_router(callbacks.router)"]
+        K --> L["include_router(dialogue.router)"]
+        L --> M["OpenRouterClient(...)<br/>chat_model + stt_model + tts_model"]
+        M --> SCHEDULER["run_reminder_scheduler(...)<br/>background task"]
+        SCHEDULER --> WEBHOOK["bot.delete_webhook(drop_pending_updates=True)"]
+        WEBHOOK --> N["dispatcher.start_polling(...)<br/>settings, session_factory,<br/>openrouter_client передаются в handlers"]
     end
 
     %% ============================================================
@@ -166,7 +192,7 @@ flowchart TD
     ROUTER -->|"/start или /help"| INTRO
     ROUTER -->|"Voice message"| VOICE_GUARD
     ROUTER -->|"Обычный text message"| TEXT_FILTER
-    ROUTER -->|"/review или кнопка<br/>🔍 Find my mistakes"| REVIEW_GUARD
+    ROUTER -->|"/review или кнопка<br/>🔍"| REVIEW_GUARD
     ROUTER -->|"/reset"| RESET_GUARD
     ROUTER -->|"Inline callback<br/>dialogue:reset"| CALLBACK_ACK
 
@@ -282,7 +308,7 @@ flowchart TD
         SEND_VOICE --> VOICE_SENT{"Telegram принял<br/>voice message?"}
 
         VOICE_SENT -->|Да| FORMAT_SPOILER["format_spoiler_text(assistant_text)<br/>&lt;tg-spoiler&gt;...&lt;/tg-spoiler&gt;"]
-        FORMAT_SPOILER --> SEND_SPOILER["message.answer:<br/>скрытый письменный ответ<br/>+ inline-кнопка 🧹 Reset dialogue"]
+        FORMAT_SPOILER --> SEND_SPOILER["message.answer:<br/>скрытый письменный ответ<br/>+ reply keyboard"]
         SEND_SPOILER --> DELETE_REPLY_STATUS["Удалить status:<br/>💬 Preparing a reply..."]
 
         VOICE_SENT -->|Нет| FALLBACK_TEXT
@@ -343,7 +369,7 @@ flowchart TD
 
 ## Review Cursor
 
-Learner messages are stored in `dialogue_messages` with `reviewed_at = NULL`. `/review` and the `🔍 Find my mistakes` reply button select only unreviewed user messages, send them to the review prompt, and mark those exact user-message rows as reviewed only after the report is successfully sent to Telegram.
+Learner messages are stored in `dialogue_messages` with `reviewed_at = NULL`. `/review` and the `🔍` reply button select only unreviewed user messages, send them to the review prompt, and mark those exact user-message rows as reviewed only after the report is successfully sent to Telegram.
 
 Assistant messages are stored as context but are not marked reviewed. `/reset` and the reset inline button delete the current session dialogue history.
 

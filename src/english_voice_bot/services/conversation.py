@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from english_voice_bot.config import Settings
 from english_voice_bot.formatting import format_spoiler_text
-from english_voice_bot.keyboards import dialogue_actions_keyboard, dialogue_reply_keyboard
+from english_voice_bot.keyboards import dialogue_reply_keyboard
 from english_voice_bot.prompts import CONVERSATION_SYSTEM_PROMPT
 from english_voice_bot.repositories import get_recent_conversation_context
 from english_voice_bot.services.openrouter import OpenRouterClient, OpenRouterError
@@ -73,6 +73,6 @@ async def send_assistant_response(
     await message.answer(
         spoiler,
         parse_mode=ParseMode.HTML,
-        reply_markup=dialogue_actions_keyboard() if voice_sent else dialogue_reply_keyboard(),
+        reply_markup=dialogue_reply_keyboard(),
     )
     return voice_sent

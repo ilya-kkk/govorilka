@@ -117,6 +117,47 @@ async def test_chat_completion_request_shape() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_structured_chat_completion_request_shape() -> None:
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": '{"ok": true}'}}]},
+        )
+    )
+
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["ok"],
+        "properties": {"ok": {"type": "boolean"}},
+    }
+    messages = [{"role": "user", "content": "return json"}]
+    async with make_client() as client:
+        answer = await client.chat_completion_json_schema(
+            messages,
+            schema_name="test_schema",
+            schema=schema,
+        )
+
+    payload = json.loads(route.calls.last.request.content)
+    assert answer == {"ok": True}
+    assert payload == {
+        "model": "chat-model",
+        "messages": messages,
+        "temperature": 0.1,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "test_schema",
+                "strict": True,
+                "schema": schema,
+            },
+        },
+    }
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_retries_429_and_5xx_responses() -> None:
     route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
         side_effect=[
