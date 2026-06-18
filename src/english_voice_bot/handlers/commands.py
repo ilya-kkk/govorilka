@@ -12,8 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from english_voice_bot.config import Settings
 from english_voice_bot.db import session_scope
 from english_voice_bot.handlers.guards import reject_message_if_not_allowed
-from english_voice_bot.keyboards import RESET_BUTTON_TEXT, REVIEW_BUTTON_TEXT, dialogue_reply_keyboard
-from english_voice_bot.repositories import clear_session_dialogue, get_or_create_session
+from english_voice_bot.keyboards import ASK_ME_BUTTON_TEXT, RESET_BUTTON_TEXT, REVIEW_BUTTON_TEXT, dialogue_reply_keyboard
+from english_voice_bot.repositories import (
+    ROLE_ASSISTANT,
+    SOURCE_GENERATED,
+    add_dialogue_message,
+    clear_session_dialogue,
+    get_or_create_session,
+)
+from english_voice_bot.services.conversation import generate_practice_question, send_assistant_response
 from english_voice_bot.services.openrouter import OpenRouterClient, OpenRouterError
 from english_voice_bot.services.review import run_review_flow
 
@@ -21,12 +28,14 @@ logger = logging.getLogger(__name__)
 router = Router()
 REVIEW_ERROR = "⚠️ I could not generate a review. Please try again in a moment."
 REVIEW_STATUS = "🔎 Checking your messages..."
+ASK_ME_ERROR = "⚠️ I could not generate a question. Please try again in a moment."
+ASK_ME_STATUS = "❓ Thinking of a question..."
 
 START_TEXT = """Send a voice message in English.
 
 I will return the transcription so you can check whether your speech was understood, then I will answer with a voice message.
 
-The written answer is hidden under a spoiler. Press 🔍 when you want a review."""
+The written answer is hidden under a spoiler. Press ❓ when you want me to ask you a practice question, or 🔍 when you want a review."""
 
 HELP_TEXT = """/start - Show the quick intro
 /help - Show commands
@@ -34,7 +43,8 @@ HELP_TEXT = """/start - Show the quick intro
 /settings - Configure reminders
 /reset - Clear this dialogue
 
-You can send voice messages for practice or ordinary text messages for debugging and occasional practice."""
+You can send voice messages for practice or ordinary text messages for debugging and occasional practice.
+Use ❓ when you want me to ask you the next question."""
 
 
 @router.message(CommandStart())
@@ -77,6 +87,55 @@ async def reset_reply_button(
         settings=settings,
         session_factory=session_factory,
     )
+
+
+@router.message(F.text == ASK_ME_BUTTON_TEXT)
+async def ask_me_reply_button(
+    message: Message,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    openrouter_client: OpenRouterClient,
+) -> None:
+    if await reject_message_if_not_allowed(message, settings):
+        return
+
+    status = await message.answer(ASK_ME_STATUS)
+    async with session_scope(session_factory) as db:
+        session = await get_or_create_session(
+            db,
+            telegram_chat_id=message.chat.id,
+            telegram_user_id=message.from_user.id,
+        )
+        await db.commit()
+
+        try:
+            assistant_text = await generate_practice_question(
+                db,
+                session_id=session.id,
+                openrouter_client=openrouter_client,
+                settings=settings,
+            )
+        except OpenRouterError:
+            logger.exception("Ask Me generation failed")
+            await _safe_edit_status(status, ASK_ME_ERROR)
+            return
+
+        await add_dialogue_message(
+            db,
+            session_id=session.id,
+            telegram_message_id=None,
+            role=ROLE_ASSISTANT,
+            source_type=SOURCE_GENERATED,
+            content=assistant_text,
+        )
+        await db.commit()
+
+    await send_assistant_response(
+        message,
+        assistant_text=assistant_text,
+        openrouter_client=openrouter_client,
+    )
+    await _safe_delete_status(status)
 
 
 @router.message(Command("review"))

@@ -9,7 +9,7 @@ A personal Telegram bot for practicing spoken English. Send a voice message, get
 - Friendly conversation replies through an OpenRouter chat model.
 - Text-to-Speech replies through OpenRouter, sent back as Telegram voice messages.
 - Hidden assistant text using Telegram spoiler formatting.
-- Reply keyboard actions: `🔍`, `⚙️`, `🧹`.
+- Reply keyboard actions: `🔍`, `❓`, `🧹`.
 - `/settings` reminder setup with OpenRouter structured JSON output.
 - Background Telegram reminders for saved practice schedules.
 - Local SQLite persistence with SQLAlchemy async API.

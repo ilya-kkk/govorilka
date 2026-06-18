@@ -8,6 +8,7 @@ from aiogram.types import (
 )
 
 REVIEW_BUTTON_TEXT = "🔍"
+ASK_ME_BUTTON_TEXT = "❓"
 SETTINGS_BUTTON_TEXT = "⚙️"
 RESET_BUTTON_TEXT = "🧹"
 SETTINGS_REMINDERS_BUTTON_TEXT = "⏰ Настроить напоминания"
@@ -19,7 +20,7 @@ def dialogue_reply_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text=REVIEW_BUTTON_TEXT),
-                KeyboardButton(text=SETTINGS_BUTTON_TEXT),
+                KeyboardButton(text=ASK_ME_BUTTON_TEXT),
                 KeyboardButton(text=RESET_BUTTON_TEXT),
             ],
         ],

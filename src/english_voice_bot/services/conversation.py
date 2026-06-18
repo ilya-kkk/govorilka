@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from english_voice_bot.config import Settings
 from english_voice_bot.formatting import format_spoiler_text
 from english_voice_bot.keyboards import dialogue_reply_keyboard
-from english_voice_bot.prompts import CONVERSATION_SYSTEM_PROMPT
+from english_voice_bot.prompts import ASK_ME_USER_PROMPT, CONVERSATION_SYSTEM_PROMPT
 from english_voice_bot.repositories import get_recent_conversation_context
 from english_voice_bot.services.openrouter import OpenRouterClient, OpenRouterError
 
@@ -43,6 +43,23 @@ async def generate_assistant_reply(
         limit=settings.max_context_messages,
     )
     return await openrouter_client.chat_completion(build_chat_messages(history), temperature=0.7)
+
+
+async def generate_practice_question(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    openrouter_client: OpenRouterClient,
+    settings: Settings,
+) -> str:
+    history = await get_recent_conversation_context(
+        db,
+        session_id=session_id,
+        limit=settings.max_context_messages,
+    )
+    messages = build_chat_messages(history)
+    messages.append({"role": "user", "content": ASK_ME_USER_PROMPT})
+    return await openrouter_client.chat_completion(messages, temperature=0.8)
 
 
 async def send_assistant_response(

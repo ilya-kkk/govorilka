@@ -13,7 +13,7 @@ from english_voice_bot.config import Settings
 from english_voice_bot.db import session_scope
 from english_voice_bot.formatting import format_transcription
 from english_voice_bot.handlers.guards import reject_message_if_not_allowed
-from english_voice_bot.keyboards import RESET_BUTTON_TEXT, REVIEW_BUTTON_TEXT, SETTINGS_BUTTON_TEXT
+from english_voice_bot.keyboards import ASK_ME_BUTTON_TEXT, RESET_BUTTON_TEXT, REVIEW_BUTTON_TEXT, SETTINGS_BUTTON_TEXT
 from english_voice_bot.repositories import (
     ROLE_ASSISTANT,
     ROLE_USER,
@@ -89,7 +89,7 @@ async def text_message_handler(
 ) -> None:
     if message.text and message.text.startswith("/"):
         return
-    if message.text in {REVIEW_BUTTON_TEXT, SETTINGS_BUTTON_TEXT, RESET_BUTTON_TEXT}:
+    if message.text in {REVIEW_BUTTON_TEXT, ASK_ME_BUTTON_TEXT, SETTINGS_BUTTON_TEXT, RESET_BUTTON_TEXT}:
         return
     if await reject_message_if_not_allowed(message, settings):
         return

@@ -6,10 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from english_voice_bot.keyboards import (
+    ASK_ME_BUTTON_TEXT,
     CONFIRM_REMINDERS_BUTTON_TEXT,
     RESET_BUTTON_TEXT,
     REVIEW_BUTTON_TEXT,
-    SETTINGS_BUTTON_TEXT,
     reminder_confirmation_keyboard,
 )
 from english_voice_bot.models import DialogueMessage
@@ -21,7 +21,7 @@ from english_voice_bot.repositories import (
     add_dialogue_message,
     get_or_create_session,
 )
-from english_voice_bot.services.conversation import TTS_FALLBACK_WARNING, send_assistant_response
+from english_voice_bot.services.conversation import TTS_FALLBACK_WARNING, generate_practice_question, send_assistant_response
 from english_voice_bot.services.openrouter import OpenRouterError
 from english_voice_bot.services.review import run_review_flow
 from tests.conftest import make_settings
@@ -38,6 +38,15 @@ class FakeOpenRouter:
 class FakeSuccessfulTTSOpenRouter(FakeOpenRouter):
     async def synthesize_speech_mp3(self, text: str) -> bytes:
         return b"mp3"
+
+
+class CapturingOpenRouter(FakeOpenRouter):
+    def __init__(self) -> None:
+        self.messages: list[dict[str, str]] = []
+
+    async def chat_completion(self, messages: list[dict[str, str]], *, temperature: float = 0.7) -> str:
+        self.messages = messages
+        return "What is one thing you want to improve this week?"
 
 
 class FakeMessage:
@@ -59,6 +68,34 @@ def test_reminder_confirmation_keyboard() -> None:
     assert markup.inline_keyboard[0][0].callback_data == "settings:reminders:confirm"
 
 
+async def test_generate_practice_question_uses_context_without_user_control_message(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    openrouter = CapturingOpenRouter()
+    async with session_factory() as db:
+        session = await get_or_create_session(db, telegram_chat_id=1, telegram_user_id=2)
+        await add_dialogue_message(
+            db,
+            session_id=session.id,
+            role=ROLE_USER,
+            source_type=SOURCE_TEXT,
+            content="I like movies.",
+        )
+        await db.commit()
+
+        question = await generate_practice_question(
+            db,
+            session_id=session.id,
+            openrouter_client=openrouter,  # type: ignore[arg-type]
+            settings=make_settings(),
+        )
+
+    assert question == "What is one thing you want to improve this week?"
+    assert openrouter.messages[-1]["role"] == "user"
+    assert "Ask me one short" in openrouter.messages[-1]["content"]
+    assert all(message["content"] != ASK_ME_BUTTON_TEXT for message in openrouter.messages)
+
+
 async def test_tts_failure_fallback_sends_hidden_written_answer() -> None:
     message = FakeMessage()
 
@@ -77,7 +114,7 @@ async def test_tts_failure_fallback_sends_hidden_written_answer() -> None:
     reply_markup = message.answer_calls[0]["reply_markup"]
     assert isinstance(reply_markup, ReplyKeyboardMarkup)
     assert reply_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
-    assert reply_markup.keyboard[0][1].text == SETTINGS_BUTTON_TEXT
+    assert reply_markup.keyboard[0][1].text == ASK_ME_BUTTON_TEXT
     assert reply_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
 
 
@@ -97,14 +134,14 @@ async def test_tts_success_sets_reply_keyboard_on_voice_and_text() -> None:
     voice_markup = message.voice_calls[0]["reply_markup"]
     assert isinstance(voice_markup, ReplyKeyboardMarkup)
     assert voice_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
-    assert voice_markup.keyboard[0][1].text == SETTINGS_BUTTON_TEXT
+    assert voice_markup.keyboard[0][1].text == ASK_ME_BUTTON_TEXT
     assert voice_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
 
     assert len(message.answer_calls) == 1
     text_markup = message.answer_calls[0]["reply_markup"]
     assert isinstance(text_markup, ReplyKeyboardMarkup)
     assert text_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
-    assert text_markup.keyboard[0][1].text == SETTINGS_BUTTON_TEXT
+    assert text_markup.keyboard[0][1].text == ASK_ME_BUTTON_TEXT
     assert text_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
 
 
