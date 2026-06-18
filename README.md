@@ -99,6 +99,8 @@ docker run --rm --env-file .env -v "$PWD/data:/app/data" english-voice-bot
 ```
 
 The volume keeps `data/bot.sqlite3` on the host.
+On startup the container fixes ownership of `/app/data`, then runs the bot as
+the unprivileged `app` user.
 
 ## Run With Docker Compose
 
@@ -127,6 +129,8 @@ docker compose down
 ```
 
 Compose uses `./data:/app/data`, so the SQLite database stays on the host.
+On startup the container fixes ownership of `/app/data`, then runs the bot as
+the unprivileged `app` user.
 
 ## Architecture Flow
 
