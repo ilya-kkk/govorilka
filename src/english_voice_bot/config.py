@@ -22,6 +22,8 @@ class Settings(BaseSettings):
 
     max_context_messages: int = Field(default=30, ge=1, le=200)
     max_review_messages: int = Field(default=100, ge=1, le=500)
+    question_bank_path: str = "./questions.json"
+    question_bank_include_builtin: bool = False
     reminder_timezone: str = "UTC"
     reminder_check_interval_seconds: int = Field(default=30, ge=5, le=3600)
 

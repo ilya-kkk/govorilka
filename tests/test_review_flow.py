@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import pytest
+from aiogram.enums import ChatType
 from aiogram.types import ReplyKeyboardMarkup
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from english_voice_bot.handlers.commands import run_review_for_message
 from english_voice_bot.keyboards import (
     ASK_ME_BUTTON_TEXT,
     CONFIRM_REMINDERS_BUTTON_TEXT,
-    RESET_BUTTON_TEXT,
     REVIEW_BUTTON_TEXT,
     reminder_confirmation_keyboard,
 )
@@ -21,7 +22,7 @@ from english_voice_bot.repositories import (
     add_dialogue_message,
     get_or_create_session,
 )
-from english_voice_bot.services.conversation import TTS_FALLBACK_WARNING, generate_practice_question, send_assistant_response
+from english_voice_bot.services.conversation import TTS_FALLBACK_WARNING, send_assistant_response
 from english_voice_bot.services.openrouter import OpenRouterError
 from english_voice_bot.services.review import run_review_flow
 from tests.conftest import make_settings
@@ -40,15 +41,6 @@ class FakeSuccessfulTTSOpenRouter(FakeOpenRouter):
         return b"mp3"
 
 
-class CapturingOpenRouter(FakeOpenRouter):
-    def __init__(self) -> None:
-        self.messages: list[dict[str, str]] = []
-
-    async def chat_completion(self, messages: list[dict[str, str]], *, temperature: float = 0.7) -> str:
-        self.messages = messages
-        return "What is one thing you want to improve this week?"
-
-
 class FakeMessage:
     def __init__(self) -> None:
         self.voice_calls: list[object] = []
@@ -61,39 +53,40 @@ class FakeMessage:
         self.answer_calls.append({"text": text, **kwargs})
 
 
+class FakeStatusMessage:
+    def __init__(self) -> None:
+        self.deleted = False
+        self.edits: list[str] = []
+
+    async def delete(self) -> None:
+        self.deleted = True
+
+    async def edit_text(self, text: str) -> None:
+        self.edits.append(text)
+
+    async def answer(self, text: str, **kwargs: object) -> None:
+        return None
+
+
+class FakeReviewMessage:
+    def __init__(self) -> None:
+        self.chat = type("Chat", (), {"id": 1, "type": ChatType.PRIVATE})()
+        self.from_user = type("User", (), {"id": 2})()
+        self.status_messages: list[FakeStatusMessage] = []
+        self.answer_calls: list[dict[str, object]] = []
+
+    async def answer(self, text: str, **kwargs: object) -> FakeStatusMessage:
+        self.answer_calls.append({"text": text, **kwargs})
+        status = FakeStatusMessage()
+        self.status_messages.append(status)
+        return status
+
+
 def test_reminder_confirmation_keyboard() -> None:
     markup = reminder_confirmation_keyboard()
 
     assert markup.inline_keyboard[0][0].text == CONFIRM_REMINDERS_BUTTON_TEXT
     assert markup.inline_keyboard[0][0].callback_data == "settings:reminders:confirm"
-
-
-async def test_generate_practice_question_uses_context_without_user_control_message(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    openrouter = CapturingOpenRouter()
-    async with session_factory() as db:
-        session = await get_or_create_session(db, telegram_chat_id=1, telegram_user_id=2)
-        await add_dialogue_message(
-            db,
-            session_id=session.id,
-            role=ROLE_USER,
-            source_type=SOURCE_TEXT,
-            content="I like movies.",
-        )
-        await db.commit()
-
-        question = await generate_practice_question(
-            db,
-            session_id=session.id,
-            openrouter_client=openrouter,  # type: ignore[arg-type]
-            settings=make_settings(),
-        )
-
-    assert question == "What is one thing you want to improve this week?"
-    assert openrouter.messages[-1]["role"] == "user"
-    assert "Ask me one short" in openrouter.messages[-1]["content"]
-    assert all(message["content"] != ASK_ME_BUTTON_TEXT for message in openrouter.messages)
 
 
 async def test_tts_failure_fallback_sends_hidden_written_answer() -> None:
@@ -115,7 +108,7 @@ async def test_tts_failure_fallback_sends_hidden_written_answer() -> None:
     assert isinstance(reply_markup, ReplyKeyboardMarkup)
     assert reply_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
     assert reply_markup.keyboard[0][1].text == ASK_ME_BUTTON_TEXT
-    assert reply_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
+    assert len(reply_markup.keyboard[0]) == 2
 
 
 async def test_tts_success_sets_reply_keyboard_on_voice_and_text() -> None:
@@ -135,14 +128,53 @@ async def test_tts_success_sets_reply_keyboard_on_voice_and_text() -> None:
     assert isinstance(voice_markup, ReplyKeyboardMarkup)
     assert voice_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
     assert voice_markup.keyboard[0][1].text == ASK_ME_BUTTON_TEXT
-    assert voice_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
+    assert len(voice_markup.keyboard[0]) == 2
 
     assert len(message.answer_calls) == 1
     text_markup = message.answer_calls[0]["reply_markup"]
     assert isinstance(text_markup, ReplyKeyboardMarkup)
     assert text_markup.keyboard[0][0].text == REVIEW_BUTTON_TEXT
     assert text_markup.keyboard[0][1].text == ASK_ME_BUTTON_TEXT
-    assert text_markup.keyboard[0][2].text == RESET_BUTTON_TEXT
+    assert len(text_markup.keyboard[0]) == 2
+
+
+async def test_review_command_clears_dialogue_after_success(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    message = FakeReviewMessage()
+    async with session_factory() as db:
+        session = await get_or_create_session(db, telegram_chat_id=1, telegram_user_id=2)
+        await add_dialogue_message(
+            db,
+            session_id=session.id,
+            role=ROLE_USER,
+            source_type=SOURCE_TEXT,
+            content="I go to shop yesterday",
+        )
+        await add_dialogue_message(
+            db,
+            session_id=session.id,
+            role=ROLE_ASSISTANT,
+            source_type=SOURCE_GENERATED,
+            content="What did you buy?",
+        )
+        await db.commit()
+
+    await run_review_for_message(
+        message=message,  # type: ignore[arg-type]
+        settings=make_settings(),
+        session_factory=session_factory,
+        openrouter_client=FakeOpenRouter(),  # type: ignore[arg-type]
+    )
+
+    async with session_factory() as db:
+        remaining = (await db.execute(select(func.count(DialogueMessage.id)))).scalar_one()
+
+    assert remaining == 0
+    assert message.answer_calls[-1]["text"] == "🧹 Dialogue history cleared. Removed 2 messages."
+    reply_markup = message.answer_calls[-1]["reply_markup"]
+    assert isinstance(reply_markup, ReplyKeyboardMarkup)
+    assert [button.text for button in reply_markup.keyboard[0]] == [REVIEW_BUTTON_TEXT, ASK_ME_BUTTON_TEXT]
 
 
 async def test_review_failure_does_not_mark_messages_reviewed(

@@ -12,6 +12,7 @@ from english_voice_bot.db import create_engine, create_session_factory, init_db
 from english_voice_bot.handlers import callbacks, commands, dialogue, settings as settings_handlers
 from english_voice_bot.logging_config import configure_logging
 from english_voice_bot.services.openrouter import OpenRouterClient
+from english_voice_bot.services.question_bank import seed_question_bank
 from english_voice_bot.services.reminder_scheduler import run_reminder_scheduler
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,15 @@ async def main() -> None:
     engine = create_engine(settings.database_url)
     await init_db(engine)
     session_factory = create_session_factory(engine)
+    async with session_factory() as db:
+        inserted_questions = await seed_question_bank(
+            db,
+            question_bank_path=settings.question_bank_path,
+            include_builtin=settings.question_bank_include_builtin,
+        )
+        await db.commit()
+    if inserted_questions:
+        logger.info("Seeded practice questions", extra={"inserted_questions": inserted_questions})
 
     bot = Bot(token=settings.telegram_bot_token_value)
     dispatcher = Dispatcher()

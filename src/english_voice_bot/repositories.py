@@ -9,6 +9,7 @@ from english_voice_bot.models import (
     ChatSession,
     DialogueMessage,
     PendingUserAction,
+    PracticeQuestion,
     ReminderSchedule,
     ReminderScheduleDraft,
     utc_now,
@@ -364,6 +365,78 @@ async def update_reminder_last_sent_slot(
         update(ReminderSchedule)
         .where(ReminderSchedule.id == schedule_id)
         .values(last_sent_slot=last_sent_slot, updated_at=utc_now())
+    )
+    await db.flush()
+    return int(result.rowcount or 0)
+
+
+async def upsert_practice_questions(
+    db: AsyncSession,
+    *,
+    questions: Sequence[tuple[str, str, str | None]],
+) -> int:
+    inserted_count = 0
+    for source_key, text, topic in questions:
+        result = await db.execute(select(PracticeQuestion).where(PracticeQuestion.source_key == source_key))
+        question = result.scalar_one_or_none()
+        if question is not None:
+            if question.text != text or question.topic != topic:
+                question.text = text
+                question.topic = topic
+                question.updated_at = utc_now()
+            continue
+
+        db.add(PracticeQuestion(source_key=source_key, text=text, topic=topic))
+        inserted_count += 1
+    await db.flush()
+    return inserted_count
+
+
+async def sync_practice_questions(
+    db: AsyncSession,
+    *,
+    questions: Sequence[tuple[str, str, str | None]],
+) -> int:
+    if not questions:
+        return 0
+
+    inserted_count = await upsert_practice_questions(db, questions=questions)
+    source_keys = [source_key for source_key, _text, _topic in questions]
+    await db.execute(delete(PracticeQuestion).where(~PracticeQuestion.source_key.in_(source_keys)))
+    await db.flush()
+    return inserted_count
+
+
+async def count_practice_questions(db: AsyncSession) -> int:
+    result = await db.execute(select(func.count(PracticeQuestion.id)))
+    return int(result.scalar_one())
+
+
+async def get_next_practice_question(db: AsyncSession) -> PracticeQuestion | None:
+    result = await db.execute(
+        select(PracticeQuestion).order_by(
+            PracticeQuestion.asked_count.asc(),
+            PracticeQuestion.last_asked_at.is_not(None).asc(),
+            PracticeQuestion.last_asked_at.asc(),
+            PracticeQuestion.id.asc(),
+        )
+    )
+    return result.scalars().first()
+
+
+async def mark_practice_question_asked(
+    db: AsyncSession,
+    *,
+    question_id: int,
+) -> int:
+    result = await db.execute(
+        update(PracticeQuestion)
+        .where(PracticeQuestion.id == question_id)
+        .values(
+            asked_count=PracticeQuestion.asked_count + 1,
+            last_asked_at=utc_now(),
+            updated_at=utc_now(),
+        )
     )
     await db.flush()
     return int(result.rowcount or 0)

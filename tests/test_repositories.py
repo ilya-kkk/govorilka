@@ -15,6 +15,8 @@ from english_voice_bot.repositories import (
     clear_reminder_schedule_draft,
     clear_session_dialogue,
     count_session_messages,
+    count_practice_questions,
+    get_next_practice_question,
     get_pending_user_action,
     get_reminder_schedule_draft,
     get_reminder_schedule,
@@ -22,8 +24,10 @@ from english_voice_bot.repositories import (
     get_recent_conversation_context,
     get_unreviewed_user_messages,
     list_enabled_reminder_schedules,
+    mark_practice_question_asked,
     mark_messages_reviewed,
     set_pending_user_action,
+    upsert_practice_questions,
     upsert_reminder_schedule_draft,
     update_reminder_last_sent_slot,
     upsert_reminder_schedule,
@@ -240,3 +244,26 @@ async def test_reminder_schedule_draft_round_trip(
     assert found.schedule_json == '{"draft":2}'
     assert deleted == 1
     assert missing is None
+
+
+async def test_practice_question_bank_picks_least_asked_question(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
+        inserted = await upsert_practice_questions(
+            db,
+            questions=[
+                ("a", "How can AI help a small business?", "AI"),
+                ("b", "What AI workflow would you automate first?", "AI"),
+            ],
+        )
+        first = await get_next_practice_question(db)
+        assert first is not None
+        await mark_practice_question_asked(db, question_id=first.id)
+        second = await get_next_practice_question(db)
+        total = await count_practice_questions(db)
+
+    assert inserted == 2
+    assert total == 2
+    assert second is not None
+    assert second.id != first.id

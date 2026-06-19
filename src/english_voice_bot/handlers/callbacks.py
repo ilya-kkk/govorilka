@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from english_voice_bot.config import Settings
 from english_voice_bot.db import session_scope
 from english_voice_bot.handlers.guards import reject_callback_if_not_allowed
+from english_voice_bot.keyboards import dialogue_reply_keyboard
 from english_voice_bot.repositories import clear_session_dialogue, get_or_create_session
 
 router = Router()
@@ -33,4 +34,7 @@ async def reset_callback(
         deleted_count = await clear_session_dialogue(db, session_id=session.id)
         await db.commit()
 
-    await callback.message.answer(f"🧹 Dialogue history cleared. Removed {deleted_count} messages.")
+    await callback.message.answer(
+        f"🧹 Dialogue history cleared. Removed {deleted_count} messages.",
+        reply_markup=dialogue_reply_keyboard(),
+    )

@@ -125,3 +125,25 @@ class ReminderScheduleDraft(Base):
         UniqueConstraint("telegram_chat_id", "telegram_user_id", name="uq_reminder_drafts_chat_user"),
         Index("ix_reminder_drafts_chat_user", "telegram_chat_id", "telegram_user_id"),
     )
+
+
+class PracticeQuestion(Base):
+    __tablename__ = "practice_questions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    asked_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_practice_questions_pick_next", "asked_count", "last_asked_at", "id"),
+    )

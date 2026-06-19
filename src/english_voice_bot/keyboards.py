@@ -21,7 +21,6 @@ def dialogue_reply_keyboard() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text=REVIEW_BUTTON_TEXT),
                 KeyboardButton(text=ASK_ME_BUTTON_TEXT),
-                KeyboardButton(text=RESET_BUTTON_TEXT),
             ],
         ],
         resize_keyboard=True,

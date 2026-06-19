@@ -34,6 +34,7 @@ RUN groupadd --gid 1000 app \
     && chown -R app:app /app
 
 COPY --from=builder --chown=app:app /opt/venv /opt/venv
+COPY --chown=app:app questions.json ./questions.json
 COPY --chown=root:root docker-entrypoint.py /usr/local/bin/docker-entrypoint
 RUN chmod +x /usr/local/bin/docker-entrypoint
 

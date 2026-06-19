@@ -9,7 +9,9 @@ A personal Telegram bot for practicing spoken English. Send a voice message, get
 - Friendly conversation replies through an OpenRouter chat model.
 - Text-to-Speech replies through OpenRouter, sent back as Telegram voice messages.
 - Hidden assistant text using Telegram spoiler formatting.
-- Reply keyboard actions: `🔍`, `❓`, `🧹`.
+- Reply keyboard actions: `🔍`, `❓`.
+- Review flow clears dialogue history after sending the correction report.
+- Practice question bank loaded into SQLite for the `❓` button.
 - `/settings` reminder setup with OpenRouter structured JSON output.
 - Background Telegram reminders for saved practice schedules.
 - Local SQLite persistence with SQLAlchemy async API.
@@ -72,6 +74,17 @@ Reminder times are interpreted in `REMINDER_TIMEZONE` and checked by the backgro
 REMINDER_TIMEZONE=UTC
 REMINDER_CHECK_INTERVAL_SECONDS=30
 ```
+
+Practice questions for the `❓` button are loaded into SQLite on startup from `./questions.json`:
+
+```env
+QUESTION_BANK_PATH=./questions.json
+QUESTION_BANK_INCLUDE_BUILTIN=false
+```
+
+Supported JSON shapes include a plain list of strings, a list of objects with `question`, `text`, or
+`prompt`, or a dictionary grouping lists by topic. Startup syncs the SQLite table to the configured
+question bank, so removed source questions disappear from the bot rotation too.
 
 ## Reminder Settings
 

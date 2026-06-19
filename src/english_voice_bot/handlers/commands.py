@@ -18,9 +18,11 @@ from english_voice_bot.repositories import (
     SOURCE_GENERATED,
     add_dialogue_message,
     clear_session_dialogue,
+    get_next_practice_question,
     get_or_create_session,
+    mark_practice_question_asked,
 )
-from english_voice_bot.services.conversation import generate_practice_question, send_assistant_response
+from english_voice_bot.services.conversation import send_assistant_response
 from english_voice_bot.services.openrouter import OpenRouterClient, OpenRouterError
 from english_voice_bot.services.review import run_review_flow
 
@@ -28,8 +30,9 @@ logger = logging.getLogger(__name__)
 router = Router()
 REVIEW_ERROR = "⚠️ I could not generate a review. Please try again in a moment."
 REVIEW_STATUS = "🔎 Checking your messages..."
-ASK_ME_ERROR = "⚠️ I could not generate a question. Please try again in a moment."
+ASK_ME_NO_QUESTIONS = "⚠️ No practice questions are loaded yet."
 ASK_ME_STATUS = "❓ Thinking of a question..."
+HISTORY_CLEARED_TEMPLATE = "🧹 Dialogue history cleared. Removed {deleted_count} messages."
 
 START_TEXT = """Send a voice message in English.
 
@@ -108,17 +111,11 @@ async def ask_me_reply_button(
         )
         await db.commit()
 
-        try:
-            assistant_text = await generate_practice_question(
-                db,
-                session_id=session.id,
-                openrouter_client=openrouter_client,
-                settings=settings,
-            )
-        except OpenRouterError:
-            logger.exception("Ask Me generation failed")
-            await _safe_edit_status(status, ASK_ME_ERROR)
+        question = await get_next_practice_question(db)
+        if question is None:
+            await _safe_edit_status(status, ASK_ME_NO_QUESTIONS)
             return
+        assistant_text = question.text
 
         await add_dialogue_message(
             db,
@@ -128,6 +125,7 @@ async def ask_me_reply_button(
             source_type=SOURCE_GENERATED,
             content=assistant_text,
         )
+        await mark_practice_question_asked(db, question_id=question.id)
         await db.commit()
 
     await send_assistant_response(
@@ -189,9 +187,17 @@ async def run_review_for_message(
                 settings=settings,
                 send_html=send_html,
             )
+            deleted_count = await clear_session_dialogue(db, session_id=session.id)
+            await db.commit()
         except OpenRouterError:
             await db.rollback()
             await _safe_edit_status(status, REVIEW_ERROR)
+            return
+
+    await message.answer(
+        HISTORY_CLEARED_TEMPLATE.format(deleted_count=deleted_count),
+        reply_markup=dialogue_reply_keyboard(),
+    )
 
 
 @router.message(Command("reset"))
@@ -225,7 +231,10 @@ async def reset_dialogue_for_message(
         deleted_count = await clear_session_dialogue(db, session_id=session.id)
         await db.commit()
 
-    await message.answer(f"🧹 Dialogue history cleared. Removed {deleted_count} messages.")
+    await message.answer(
+        HISTORY_CLEARED_TEMPLATE.format(deleted_count=deleted_count),
+        reply_markup=dialogue_reply_keyboard(),
+    )
 
 
 async def _safe_edit_status(status: Message, text: str) -> None:
