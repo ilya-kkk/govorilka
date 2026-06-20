@@ -34,3 +34,11 @@ def test_allowed_telegram_user_ids_rejects_usernames(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="numeric Telegram user IDs"):
         make_settings()
+
+
+def test_reminder_parse_max_attempts_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("REMINDER_PARSE_MAX_ATTEMPTS", "5")
+
+    settings = make_settings()
+
+    assert settings.reminder_parse_max_attempts == 5

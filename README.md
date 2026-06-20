@@ -73,6 +73,7 @@ Reminder times are interpreted in `REMINDER_TIMEZONE` and checked by the backgro
 ```env
 REMINDER_TIMEZONE=UTC
 REMINDER_CHECK_INTERVAL_SECONDS=30
+REMINDER_PARSE_MAX_ATTEMPTS=3
 ```
 
 Practice questions for the `❓` button are loaded into SQLite on startup from `./questions.json`:
@@ -99,8 +100,9 @@ Examples:
 ```
 
 The bot asks OpenRouter for a strict JSON Schema response, validates the returned JSON locally,
-shows the day-by-day plan with a `✅ Да, подтвердить` inline button, and saves it in SQLite only
-after confirmation.
+retries parsing up to `REMINDER_PARSE_MAX_ATTEMPTS` times if the structured JSON is invalid, shows
+the day-by-day plan with a `✅ Да, подтвердить` inline button, and saves it in SQLite only after
+confirmation.
 
 ## Install Dependencies
 

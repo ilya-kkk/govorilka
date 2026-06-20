@@ -126,6 +126,7 @@ async def reminder_setup_text_handler(
             openrouter_client,
             user_text=message.text.strip(),
             timezone=settings.reminder_timezone,
+            max_attempts=settings.reminder_parse_max_attempts,
         )
     except (OpenRouterError, ValueError):
         logger.exception("Reminder schedule parsing failed")

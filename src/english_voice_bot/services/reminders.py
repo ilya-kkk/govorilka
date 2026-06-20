@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -8,6 +9,8 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from english_voice_bot.services.openrouter import OpenRouterClient, OpenRouterError
+
+logger = logging.getLogger(__name__)
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 DAY_LABELS_RU = {
@@ -93,35 +96,104 @@ async def parse_reminder_request(
     *,
     user_text: str,
     timezone: str,
+    max_attempts: int = 3,
 ) -> ReminderPlan:
     _validate_timezone(timezone)
-    data = await openrouter_client.chat_completion_json_schema(
-        [
-            {
-                "role": "system",
-                "content": (
-                    "You extract concrete English-practice reminder schedules from Russian or English user text. "
-                    "Return only JSON that matches the supplied schema. "
-                    "Use 24-hour HH:MM times. Use the provided timezone exactly. "
-                    "Always return exactly seven days in Monday-to-Sunday order. "
-                    "If the user says every day, enable all seven days. "
-                    "If the user gives a vague time, use these defaults: morning=09:00, day/afternoon=14:00, "
-                    "evening=19:00. If the user gives a frequency without exact weekdays, choose reasonable "
-                    "practice days and explain that choice in assumptions. For twice per week, prefer Tuesday "
-                    "and Friday. For three times per week, prefer Monday, Wednesday, and Friday. "
-                    "If the request is too unclear to schedule, disable all days and explain what is missing."
+    attempts = max(1, max_attempts)
+    previous_error: str | None = None
+    previous_data: dict[str, Any] | None = None
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            data = await openrouter_client.chat_completion_json_schema(
+                _build_reminder_messages(
+                    user_text=user_text,
+                    timezone=timezone,
+                    previous_error=previous_error,
+                    previous_data=previous_data,
                 ),
-            },
-            {
-                "role": "user",
-                "content": f"Timezone: {timezone}\nReminder request: {user_text}",
-            },
-        ],
-        schema_name="english_practice_reminder_schedule",
-        schema=reminder_schema(timezone=timezone),
-        temperature=0.1,
-    )
-    return parse_reminder_plan(data)
+                schema_name="english_practice_reminder_schedule",
+                schema=reminder_schema(timezone=timezone),
+                temperature=0.1,
+            )
+        except OpenRouterError as exc:
+            last_error = exc
+            previous_error = str(exc)
+            previous_data = None
+            logger.warning(
+                "Reminder structured-output request failed",
+                extra={"attempt": attempt, "max_attempts": attempts},
+                exc_info=True,
+            )
+            continue
+
+        try:
+            return parse_reminder_plan(data)
+        except ValueError as exc:
+            last_error = exc
+            previous_error = str(exc)
+            previous_data = data
+            logger.warning(
+                "Reminder structured-output JSON failed validation",
+                extra={
+                    "attempt": attempt,
+                    "max_attempts": attempts,
+                    "validation_error": previous_error,
+                },
+            )
+
+    raise OpenRouterError(f"Could not parse reminder schedule after {attempts} attempts") from last_error
+
+
+def _build_reminder_messages(
+    *,
+    user_text: str,
+    timezone: str,
+    previous_error: str | None,
+    previous_data: dict[str, Any] | None,
+) -> list[dict[str, str]]:
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You extract concrete English-practice reminder schedules from Russian or English user text. "
+                "Return only JSON that matches the supplied schema. "
+                "Use 24-hour HH:MM times. Use the provided timezone exactly. "
+                "Always return exactly seven days in Monday-to-Sunday order. "
+                "If the user says every day, enable all seven days. "
+                "If the user gives a vague time, use these defaults: morning=09:00, day/afternoon=14:00, "
+                "evening=19:00. If the user gives a frequency without exact weekdays, choose reasonable "
+                "practice days and explain that choice in assumptions. For twice per week, prefer Tuesday "
+                "and Friday. For three times per week, prefer Monday, Wednesday, and Friday. "
+                "If the request is too unclear to schedule, disable all days and explain what is missing."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Timezone: {timezone}\nReminder request: {user_text}",
+        },
+    ]
+    if previous_error is not None:
+        retry_lines = [
+            "Previous structured-output attempt failed local validation.",
+            f"Validation error: {previous_error}",
+            "Try again for the same reminder request. Return a corrected JSON object.",
+            "The JSON must contain exactly seven days in this order: monday, tuesday, wednesday, thursday, friday, saturday, sunday.",
+        ]
+        if previous_data is not None:
+            retry_lines.extend(
+                [
+                    "Previous invalid JSON:",
+                    _compact_json_for_prompt(previous_data),
+                ]
+            )
+        messages.append({"role": "user", "content": "\n".join(retry_lines)})
+    return messages
+
+
+def _compact_json_for_prompt(data: dict[str, Any]) -> str:
+    return json.dumps(data, ensure_ascii=False, sort_keys=True)[:2000]
 
 
 def parse_reminder_plan(data: dict[str, Any]) -> ReminderPlan:

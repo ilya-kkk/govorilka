@@ -9,10 +9,29 @@ from english_voice_bot.services.reminders import (
     ReminderPlan,
     due_slot_for_now,
     format_reminder_confirmation,
+    parse_reminder_request,
     parse_reminder_plan,
     reminder_plan_from_json,
     reminder_plan_to_json,
 )
+from english_voice_bot.services.openrouter import OpenRouterError
+
+
+class FakeReminderOpenRouter:
+    def __init__(self, responses: list[dict[str, object]]) -> None:
+        self.responses = responses
+        self.messages_by_call: list[list[dict[str, str]]] = []
+
+    async def chat_completion_json_schema(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        schema_name: str,
+        schema: dict[str, object],
+        temperature: float = 0.1,
+    ) -> dict[str, object]:
+        self.messages_by_call.append(messages)
+        return self.responses.pop(0)
 
 
 def make_plan() -> ReminderPlan:
@@ -78,3 +97,63 @@ def test_parse_reminder_plan_requires_ordered_weekdays() -> None:
 
     with pytest.raises(ValueError, match="Monday through Sunday"):
         parse_reminder_plan(data)
+
+
+async def test_parse_reminder_request_retries_invalid_structured_json() -> None:
+    client = FakeReminderOpenRouter(
+        [
+            {
+                "timezone": "UTC",
+                "days": [
+                    {"day": "monday", "enabled": True, "times": ["09:00"]},
+                ],
+                "assumptions": [],
+            },
+            {
+                "timezone": "UTC",
+                "days": [
+                    {"day": "monday", "enabled": False, "times": []},
+                    {"day": "tuesday", "enabled": True, "times": ["09:00"]},
+                    {"day": "wednesday", "enabled": False, "times": []},
+                    {"day": "thursday", "enabled": False, "times": []},
+                    {"day": "friday", "enabled": True, "times": ["19:00"]},
+                    {"day": "saturday", "enabled": False, "times": []},
+                    {"day": "sunday", "enabled": False, "times": []},
+                ],
+                "assumptions": ["Два раза в неделю выбраны вторник и пятница."],
+            },
+        ]
+    )
+
+    plan = await parse_reminder_request(
+        client,  # type: ignore[arg-type]
+        user_text="два раза в неделю утром и вечером",
+        timezone="UTC",
+        max_attempts=3,
+    )
+
+    assert plan.days[1].times == ("09:00",)
+    assert plan.days[4].times == ("19:00",)
+    assert len(client.messages_by_call) == 2
+    assert "Previous structured-output attempt failed" in client.messages_by_call[1][-1]["content"]
+    assert "exactly seven days" in client.messages_by_call[1][-1]["content"]
+
+
+async def test_parse_reminder_request_raises_after_max_attempts() -> None:
+    client = FakeReminderOpenRouter(
+        [
+            {"timezone": "UTC", "days": [], "assumptions": []},
+            {"timezone": "UTC", "days": [], "assumptions": []},
+            {"timezone": "UTC", "days": [], "assumptions": []},
+        ]
+    )
+
+    with pytest.raises(OpenRouterError, match="after 3 attempts"):
+        await parse_reminder_request(
+            client,  # type: ignore[arg-type]
+            user_text="каждый день утром",
+            timezone="UTC",
+            max_attempts=3,
+        )
+
+    assert len(client.messages_by_call) == 3
