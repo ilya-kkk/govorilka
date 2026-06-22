@@ -42,3 +42,11 @@ def test_reminder_parse_max_attempts_from_env(monkeypatch) -> None:
     settings = make_settings()
 
     assert settings.reminder_parse_max_attempts == 5
+
+
+def test_goal_parse_max_attempts_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("GOAL_PARSE_MAX_ATTEMPTS", "4")
+
+    settings = make_settings()
+
+    assert settings.goal_parse_max_attempts == 4

@@ -9,7 +9,7 @@ from aiogram.types import BotCommand
 
 from english_voice_bot.config import Settings
 from english_voice_bot.db import create_engine, create_session_factory, init_db
-from english_voice_bot.handlers import callbacks, commands, dialogue, settings as settings_handlers
+from english_voice_bot.handlers import callbacks, commands, dialogue, goals, settings as settings_handlers
 from english_voice_bot.logging_config import configure_logging
 from english_voice_bot.services.openrouter import OpenRouterClient
 from english_voice_bot.services.question_bank import seed_question_bank
@@ -39,6 +39,7 @@ async def main() -> None:
     dispatcher = Dispatcher()
     dispatcher.include_router(commands.router)
     dispatcher.include_router(settings_handlers.router)
+    dispatcher.include_router(goals.router)
     dispatcher.include_router(callbacks.router)
     dispatcher.include_router(dialogue.router)
 
@@ -65,6 +66,9 @@ async def main() -> None:
                     BotCommand(command="start", description="Show intro"),
                     BotCommand(command="help", description="Show commands"),
                     BotCommand(command="settings", description="Configure reminders"),
+                    BotCommand(command="showresults", description="Show practice stats"),
+                    BotCommand(command="setgoal", description="Set practice goal"),
+                    BotCommand(command="goalstatus", description="Show goal progress"),
                     BotCommand(command="review", description="Review new learner messages"),
                     BotCommand(command="reset", description="Clear dialogue"),
                 ]

@@ -4,7 +4,12 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from english_voice_bot.repositories import get_reminder_schedule, upsert_reminder_schedule
+from english_voice_bot.repositories import (
+    get_reminder_schedule,
+    upsert_goal_reminder_schedule,
+    upsert_practice_goal,
+    upsert_reminder_schedule,
+)
 from english_voice_bot.services.reminder_scheduler import send_due_reminders
 from english_voice_bot.services.reminders import ReminderDay, ReminderPlan, reminder_plan_to_json
 
@@ -61,3 +66,39 @@ async def test_send_due_reminders_sends_once_per_slot(
     assert bot.messages[0]["chat_id"] == 10
     assert schedule is not None
     assert schedule.last_sent_slot == "2026-06-16:09:00"
+
+
+async def test_send_due_goal_reminders_sends_goal_status(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    bot = FakeBot()
+    async with session_factory() as db:
+        await upsert_practice_goal(
+            db,
+            telegram_chat_id=10,
+            telegram_user_id=20,
+            goal_type="periodic",
+            target_minutes=60,
+            period="week",
+            start_date=datetime(2026, 6, 15, tzinfo=UTC).date(),
+            deadline_date=None,
+            goal_json="{}",
+        )
+        await upsert_goal_reminder_schedule(
+            db,
+            telegram_chat_id=10,
+            telegram_user_id=20,
+            timezone="UTC",
+            schedule_json=make_schedule_json(),
+        )
+        await db.commit()
+
+    now = datetime(2026, 6, 16, 9, 0, 30, tzinfo=UTC)
+    first_count = await send_due_reminders(bot, session_factory, now=now)  # type: ignore[arg-type]
+    second_count = await send_due_reminders(bot, session_factory, now=now)  # type: ignore[arg-type]
+
+    assert first_count == 1
+    assert second_count == 0
+    assert len(bot.messages) == 1
+    assert bot.messages[0]["chat_id"] == 10
+    assert "🎯 Статус цели" in bot.messages[0]["text"]

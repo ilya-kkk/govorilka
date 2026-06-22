@@ -14,6 +14,8 @@ A personal Telegram bot for practicing spoken English. Send a voice message, get
 - Practice question bank loaded into SQLite for the `❓` button.
 - `/settings` reminder setup with OpenRouter structured JSON output.
 - Background Telegram reminders for saved practice schedules.
+- Practice activity tracking with `/showresults`.
+- Speaking-practice goals with `/setgoal`, `/goalstatus`, and progress reminders.
 - Local SQLite persistence with SQLAlchemy async API.
 - No permanent audio storage.
 
@@ -74,6 +76,7 @@ Reminder times are interpreted in `REMINDER_TIMEZONE` and checked by the backgro
 REMINDER_TIMEZONE=UTC
 REMINDER_CHECK_INTERVAL_SECONDS=30
 REMINDER_PARSE_MAX_ATTEMPTS=3
+GOAL_PARSE_MAX_ATTEMPTS=3
 ```
 
 Practice questions for the `❓` button are loaded into SQLite on startup from `./questions.json`:
@@ -103,6 +106,39 @@ The bot asks OpenRouter for a strict JSON Schema response, validates the returne
 retries parsing up to `REMINDER_PARSE_MAX_ATTEMPTS` times if the structured JSON is invalid, shows
 the day-by-day plan with a `✅ Да, подтвердить` inline button, and saves it in SQLite only after
 confirmation.
+
+## Practice Results And Goals
+
+Every normal text or voice practice message is stored as a lightweight activity event with timestamp
+and word count. The bot keeps daily aggregates in SQLite. Practice time is calculated from message
+gaps: consecutive messages up to 15 minutes apart count as continuous practice; longer gaps start a
+new session.
+
+Commands:
+
+```text
+/showresults
+/setgoal
+/goalstatus
+```
+
+`/showresults` shows daily stats for the current month, weekly totals, monthly total, message count,
+and word count.
+
+`/setgoal` starts a structured-output flow. Examples:
+
+```text
+10 часов speaking practice в неделю
+100 часов английского за 6 месяцев
+```
+
+The bot asks OpenRouter for a strict JSON Schema response, validates it locally, and retries up to
+`GOAL_PARSE_MAX_ATTEMPTS` times if the returned JSON is invalid.
+
+`/goalstatus` compares saved practice time with the active goal and returns a soft progress message.
+It also shows an inline `⏰ Установить напоминание` button. Goal reminders reuse the same reminder
+schedule parser and retry logic as regular reminders, but send progress summaries instead of generic
+practice nudges.
 
 ## Install Dependencies
 

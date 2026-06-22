@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     reminder_timezone: str = "UTC"
     reminder_check_interval_seconds: int = Field(default=30, ge=5, le=3600)
     reminder_parse_max_attempts: int = Field(default=3, ge=1, le=10)
+    goal_parse_max_attempts: int = Field(default=3, ge=1, le=10)
 
     allowed_telegram_user_ids: Annotated[frozenset[int], NoDecode] = Field(
         default_factory=frozenset

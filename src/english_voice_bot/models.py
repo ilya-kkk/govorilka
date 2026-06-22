@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -146,4 +146,116 @@ class PracticeQuestion(Base):
 
     __table_args__ = (
         Index("ix_practice_questions_pick_next", "asked_count", "last_asked_at", "id"),
+    )
+
+
+class PracticeActivityEvent(Base):
+    __tablename__ = "practice_activity_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    word_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("ix_practice_activity_session_time", "session_id", "occurred_at", "id"),
+    )
+
+
+class PracticeDailyStat(Base):
+    __tablename__ = "practice_daily_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False)
+    local_date: Mapped[date] = mapped_column(Date, nullable=False)
+    message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    word_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    practice_seconds: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "local_date", name="uq_practice_daily_stats_session_date"),
+        Index("ix_practice_daily_stats_session_date", "session_id", "local_date"),
+    )
+
+
+class PracticeGoal(Base):
+    __tablename__ = "practice_goals"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    goal_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    period: Mapped[str] = mapped_column(String(16), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    deadline_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    goal_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("telegram_chat_id", "telegram_user_id", name="uq_practice_goals_chat_user"),
+        Index("ix_practice_goals_chat_user", "telegram_chat_id", "telegram_user_id"),
+    )
+
+
+class GoalReminderSchedule(Base):
+    __tablename__ = "goal_reminder_schedules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    schedule_json: Mapped[str] = mapped_column(Text, nullable=False)
+    last_sent_slot: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("telegram_chat_id", "telegram_user_id", name="uq_goal_reminder_schedules_chat_user"),
+        Index("ix_goal_reminder_schedules_enabled", "enabled"),
+        Index("ix_goal_reminder_schedules_chat_user", "telegram_chat_id", "telegram_user_id"),
+    )
+
+
+class GoalReminderScheduleDraft(Base):
+    __tablename__ = "goal_reminder_schedule_drafts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    schedule_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("telegram_chat_id", "telegram_user_id", name="uq_goal_reminder_drafts_chat_user"),
+        Index("ix_goal_reminder_drafts_chat_user", "telegram_chat_id", "telegram_user_id"),
     )

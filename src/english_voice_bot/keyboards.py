@@ -13,6 +13,8 @@ SETTINGS_BUTTON_TEXT = "⚙️"
 RESET_BUTTON_TEXT = "🧹"
 SETTINGS_REMINDERS_BUTTON_TEXT = "⏰ Настроить напоминания"
 CONFIRM_REMINDERS_BUTTON_TEXT = "✅ Да, подтвердить"
+SET_GOAL_REMINDER_BUTTON_TEXT = "⏰ Установить напоминание"
+CONFIRM_GOAL_REMINDERS_BUTTON_TEXT = "✅ Да, подтвердить"
 
 
 def dialogue_reply_keyboard() -> ReplyKeyboardMarkup:
@@ -40,5 +42,26 @@ def reminder_confirmation_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text=CONFIRM_REMINDERS_BUTTON_TEXT, callback_data="settings:reminders:confirm")],
+        ]
+    )
+
+
+def goal_status_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=SET_GOAL_REMINDER_BUTTON_TEXT, callback_data="goals:reminders")],
+        ]
+    )
+
+
+def goal_reminder_confirmation_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=CONFIRM_GOAL_REMINDERS_BUTTON_TEXT,
+                    callback_data="goals:reminders:confirm",
+                )
+            ],
         ]
     )

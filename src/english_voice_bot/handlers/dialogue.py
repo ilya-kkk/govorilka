@@ -23,6 +23,7 @@ from english_voice_bot.repositories import (
     add_dialogue_message,
     get_or_create_session,
 )
+from english_voice_bot.services.activity import record_practice_activity
 from english_voice_bot.services.conversation import generate_assistant_reply, send_assistant_response
 from english_voice_bot.services.openrouter import OpenRouterClient, OpenRouterError
 
@@ -139,6 +140,14 @@ async def _process_user_message(
             role=ROLE_USER,
             source_type=source_type,
             content=content,
+        )
+        await record_practice_activity(
+            db,
+            session_id=session.id,
+            telegram_message_id=message.message_id,
+            source_type=source_type,
+            content=content,
+            timezone=settings.reminder_timezone,
         )
         await db.commit()
 

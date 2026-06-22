@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import date, datetime
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from english_voice_bot.models import (
     ChatSession,
     DialogueMessage,
+    GoalReminderSchedule,
+    GoalReminderScheduleDraft,
     PendingUserAction,
+    PracticeActivityEvent,
+    PracticeDailyStat,
+    PracticeGoal,
     PracticeQuestion,
     ReminderSchedule,
     ReminderScheduleDraft,
@@ -23,6 +29,8 @@ SOURCE_TEXT = "text"
 SOURCE_GENERATED = "generated"
 
 PENDING_ACTION_REMINDER_SETUP = "reminder_setup"
+PENDING_ACTION_GOAL_SETUP = "goal_setup"
+PENDING_ACTION_GOAL_REMINDER_SETUP = "goal_reminder_setup"
 
 
 async def get_or_create_session(
@@ -169,6 +177,76 @@ async def count_session_messages(db: AsyncSession, *, session_id: int) -> int:
         select(func.count(DialogueMessage.id)).where(DialogueMessage.session_id == session_id)
     )
     return int(result.scalar_one())
+
+
+async def add_practice_activity_event(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    source_type: str,
+    word_count: int,
+    telegram_message_id: int | None = None,
+    occurred_at: datetime | None = None,
+) -> PracticeActivityEvent:
+    event = PracticeActivityEvent(
+        session_id=session_id,
+        telegram_message_id=telegram_message_id,
+        source_type=source_type,
+        word_count=word_count,
+        occurred_at=occurred_at or utc_now(),
+    )
+    db.add(event)
+    await db.flush()
+    return event
+
+
+async def list_practice_activity_events(
+    db: AsyncSession,
+    *,
+    session_id: int,
+) -> list[PracticeActivityEvent]:
+    result = await db.execute(
+        select(PracticeActivityEvent)
+        .where(PracticeActivityEvent.session_id == session_id)
+        .order_by(PracticeActivityEvent.occurred_at.asc(), PracticeActivityEvent.id.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def replace_practice_daily_stats(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    rows: Sequence[tuple[date, int, int, int]],
+) -> None:
+    await db.execute(delete(PracticeDailyStat).where(PracticeDailyStat.session_id == session_id))
+    for local_date, message_count, word_count, practice_seconds in rows:
+        db.add(
+            PracticeDailyStat(
+                session_id=session_id,
+                local_date=local_date,
+                message_count=message_count,
+                word_count=word_count,
+                practice_seconds=practice_seconds,
+            )
+        )
+    await db.flush()
+
+
+async def list_practice_daily_stats(
+    db: AsyncSession,
+    *,
+    session_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[PracticeDailyStat]:
+    query = select(PracticeDailyStat).where(PracticeDailyStat.session_id == session_id)
+    if start_date is not None:
+        query = query.where(PracticeDailyStat.local_date >= start_date)
+    if end_date is not None:
+        query = query.where(PracticeDailyStat.local_date <= end_date)
+    result = await db.execute(query.order_by(PracticeDailyStat.local_date.asc()))
+    return list(result.scalars().all())
 
 
 async def set_pending_user_action(
@@ -437,6 +515,191 @@ async def mark_practice_question_asked(
             last_asked_at=utc_now(),
             updated_at=utc_now(),
         )
+    )
+    await db.flush()
+    return int(result.rowcount or 0)
+
+
+async def upsert_practice_goal(
+    db: AsyncSession,
+    *,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+    goal_type: str,
+    target_minutes: int,
+    period: str,
+    start_date: date,
+    deadline_date: date | None,
+    goal_json: str,
+    enabled: bool = True,
+) -> PracticeGoal:
+    result = await db.execute(
+        select(PracticeGoal).where(
+            PracticeGoal.telegram_chat_id == telegram_chat_id,
+            PracticeGoal.telegram_user_id == telegram_user_id,
+        )
+    )
+    goal = result.scalar_one_or_none()
+    if goal is not None:
+        goal.enabled = enabled
+        goal.goal_type = goal_type
+        goal.target_minutes = target_minutes
+        goal.period = period
+        goal.start_date = start_date
+        goal.deadline_date = deadline_date
+        goal.goal_json = goal_json
+        goal.updated_at = utc_now()
+        await db.flush()
+        return goal
+
+    goal = PracticeGoal(
+        telegram_chat_id=telegram_chat_id,
+        telegram_user_id=telegram_user_id,
+        enabled=enabled,
+        goal_type=goal_type,
+        target_minutes=target_minutes,
+        period=period,
+        start_date=start_date,
+        deadline_date=deadline_date,
+        goal_json=goal_json,
+    )
+    db.add(goal)
+    await db.flush()
+    return goal
+
+
+async def get_practice_goal(
+    db: AsyncSession,
+    *,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+) -> PracticeGoal | None:
+    result = await db.execute(
+        select(PracticeGoal).where(
+            PracticeGoal.telegram_chat_id == telegram_chat_id,
+            PracticeGoal.telegram_user_id == telegram_user_id,
+            PracticeGoal.enabled.is_(True),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def upsert_goal_reminder_schedule(
+    db: AsyncSession,
+    *,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+    timezone: str,
+    schedule_json: str,
+    enabled: bool = True,
+) -> GoalReminderSchedule:
+    result = await db.execute(
+        select(GoalReminderSchedule).where(
+            GoalReminderSchedule.telegram_chat_id == telegram_chat_id,
+            GoalReminderSchedule.telegram_user_id == telegram_user_id,
+        )
+    )
+    schedule = result.scalar_one_or_none()
+    if schedule is not None:
+        schedule.enabled = enabled
+        schedule.timezone = timezone
+        schedule.schedule_json = schedule_json
+        schedule.last_sent_slot = None
+        schedule.updated_at = utc_now()
+        await db.flush()
+        return schedule
+
+    schedule = GoalReminderSchedule(
+        telegram_chat_id=telegram_chat_id,
+        telegram_user_id=telegram_user_id,
+        enabled=enabled,
+        timezone=timezone,
+        schedule_json=schedule_json,
+    )
+    db.add(schedule)
+    await db.flush()
+    return schedule
+
+
+async def upsert_goal_reminder_schedule_draft(
+    db: AsyncSession,
+    *,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+    timezone: str,
+    schedule_json: str,
+) -> GoalReminderScheduleDraft:
+    result = await db.execute(
+        select(GoalReminderScheduleDraft).where(
+            GoalReminderScheduleDraft.telegram_chat_id == telegram_chat_id,
+            GoalReminderScheduleDraft.telegram_user_id == telegram_user_id,
+        )
+    )
+    draft = result.scalar_one_or_none()
+    if draft is not None:
+        draft.timezone = timezone
+        draft.schedule_json = schedule_json
+        draft.updated_at = utc_now()
+        await db.flush()
+        return draft
+
+    draft = GoalReminderScheduleDraft(
+        telegram_chat_id=telegram_chat_id,
+        telegram_user_id=telegram_user_id,
+        timezone=timezone,
+        schedule_json=schedule_json,
+    )
+    db.add(draft)
+    await db.flush()
+    return draft
+
+
+async def get_goal_reminder_schedule_draft(
+    db: AsyncSession,
+    *,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+) -> GoalReminderScheduleDraft | None:
+    result = await db.execute(
+        select(GoalReminderScheduleDraft).where(
+            GoalReminderScheduleDraft.telegram_chat_id == telegram_chat_id,
+            GoalReminderScheduleDraft.telegram_user_id == telegram_user_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def clear_goal_reminder_schedule_draft(
+    db: AsyncSession,
+    *,
+    telegram_chat_id: int,
+    telegram_user_id: int,
+) -> int:
+    result = await db.execute(
+        delete(GoalReminderScheduleDraft).where(
+            GoalReminderScheduleDraft.telegram_chat_id == telegram_chat_id,
+            GoalReminderScheduleDraft.telegram_user_id == telegram_user_id,
+        )
+    )
+    await db.flush()
+    return int(result.rowcount or 0)
+
+
+async def list_enabled_goal_reminder_schedules(db: AsyncSession) -> list[GoalReminderSchedule]:
+    result = await db.execute(select(GoalReminderSchedule).where(GoalReminderSchedule.enabled.is_(True)))
+    return list(result.scalars().all())
+
+
+async def update_goal_reminder_last_sent_slot(
+    db: AsyncSession,
+    *,
+    schedule_id: int,
+    last_sent_slot: str,
+) -> int:
+    result = await db.execute(
+        update(GoalReminderSchedule)
+        .where(GoalReminderSchedule.id == schedule_id)
+        .values(last_sent_slot=last_sent_slot, updated_at=utc_now())
     )
     await db.flush()
     return int(result.rowcount or 0)

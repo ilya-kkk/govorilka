@@ -44,6 +44,9 @@ HELP_TEXT = """/start - Show the quick intro
 /help - Show commands
 /review - Review new learner messages
 /settings - Configure reminders
+/showresults - Show practice statistics
+/setgoal - Set a speaking-practice goal
+/goalstatus - Show goal progress
 /reset - Clear this dialogue
 
 You can send voice messages for practice or ordinary text messages for debugging and occasional practice.
