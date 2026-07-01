@@ -50,3 +50,19 @@ def test_goal_parse_max_attempts_from_env(monkeypatch) -> None:
     settings = make_settings()
 
     assert settings.goal_parse_max_attempts == 4
+
+
+def test_openrouter_chat_fallback_models_accepts_comma_separated_env(monkeypatch) -> None:
+    monkeypatch.setenv("OPENROUTER_CHAT_FALLBACK_MODELS", "model-a, model-b")
+
+    settings = make_settings()
+
+    assert settings.openrouter_chat_fallback_models == ("model-a", "model-b")
+
+
+def test_openrouter_chat_fallback_models_accepts_json_array_env(monkeypatch) -> None:
+    monkeypatch.setenv("OPENROUTER_CHAT_FALLBACK_MODELS", '["model-a", "model-b"]')
+
+    settings = make_settings()
+
+    assert settings.openrouter_chat_fallback_models == ("model-a", "model-b")

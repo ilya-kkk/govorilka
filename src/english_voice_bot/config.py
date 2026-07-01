@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     openrouter_api_key: SecretStr
 
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_chat_model: str = "openai/gpt-oss-120b:free"
+    openrouter_chat_model: str = "openai/gpt-4o-mini"
+    openrouter_chat_fallback_models: Annotated[tuple[str, ...], NoDecode] = (
+        "google/gemini-2.5-flash-lite",
+    )
     openrouter_stt_model: str = "openai/gpt-4o-mini-transcribe"
     openrouter_tts_model: str = "hexgrad/kokoro-82m"
     openrouter_tts_voice: str = "af_heart"
@@ -65,6 +68,31 @@ class Settings(BaseSettings):
             )
         raise ValueError("ALLOWED_TELEGRAM_USER_IDS must be a comma-separated list of integers")
 
+    @field_validator("openrouter_chat_fallback_models", mode="before")
+    @classmethod
+    def parse_openrouter_chat_fallback_models(cls, value: object) -> tuple[str, ...]:
+        if value is None or value == "":
+            return ()
+        if isinstance(value, tuple):
+            return value
+        if isinstance(value, list | set):
+            return tuple(cls.parse_openrouter_chat_model(item) for item in value)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return ()
+            if stripped.startswith("["):
+                decoded = json.loads(stripped)
+                if not isinstance(decoded, list):
+                    raise ValueError("OPENROUTER_CHAT_FALLBACK_MODELS JSON value must be a list")
+                return tuple(cls.parse_openrouter_chat_model(item) for item in decoded)
+            return tuple(
+                cls.parse_openrouter_chat_model(part.strip())
+                for part in stripped.split(",")
+                if part.strip()
+            )
+        raise ValueError("OPENROUTER_CHAT_FALLBACK_MODELS must be a comma-separated list")
+
     @classmethod
     def parse_allowed_user_id(cls, value: object) -> int:
         try:
@@ -74,6 +102,12 @@ class Settings(BaseSettings):
                 "ALLOWED_TELEGRAM_USER_IDS must contain numeric Telegram user IDs, "
                 "not Telegram usernames"
             ) from exc
+
+    @staticmethod
+    def parse_openrouter_chat_model(value: object) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("OPENROUTER_CHAT_FALLBACK_MODELS must contain model IDs")
+        return value.strip()
 
     @property
     def openrouter_api_key_value(self) -> str:

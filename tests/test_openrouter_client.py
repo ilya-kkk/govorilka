@@ -10,11 +10,16 @@ import respx
 from english_voice_bot.services.openrouter import OpenRouterClient, OpenRouterError
 
 
-def make_client(*, tts_model: str = "tts-model") -> OpenRouterClient:
+def make_client(
+    *,
+    chat_fallback_models: tuple[str, ...] = (),
+    tts_model: str = "tts-model",
+) -> OpenRouterClient:
     return OpenRouterClient(
         api_key="secret",
         base_url="https://openrouter.ai/api/v1",
         chat_model="chat-model",
+        chat_fallback_models=chat_fallback_models,
         stt_model="stt-model",
         tts_model=tts_model,
         tts_voice="nova",
@@ -172,3 +177,43 @@ async def test_retries_429_and_5xx_responses() -> None:
 
     assert answer == "ok"
     assert route.call_count == 3
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_chat_completion_tries_fallback_model_after_retryable_http_error() -> None:
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        side_effect=[
+            httpx.Response(429, json={"error": {"message": "rate limit"}}),
+            httpx.Response(429, json={"error": {"message": "rate limit"}}),
+            httpx.Response(429, json={"error": {"message": "rate limit"}}),
+            httpx.Response(200, json={"choices": [{"message": {"content": "fallback ok"}}]}),
+        ]
+    )
+
+    async with make_client(chat_fallback_models=("fallback-model",)) as client:
+        answer = await client.chat_completion([{"role": "user", "content": "hello"}])
+
+    assert answer == "fallback ok"
+    assert route.call_count == 4
+    payloads = [json.loads(call.request.content) for call in route.calls]
+    assert [payload["model"] for payload in payloads] == [
+        "chat-model",
+        "chat-model",
+        "chat-model",
+        "fallback-model",
+    ]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_chat_completion_does_not_try_fallback_for_non_retryable_http_error() -> None:
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=httpx.Response(400, json={"error": {"message": "bad request"}})
+    )
+
+    async with make_client(chat_fallback_models=("fallback-model",)) as client:
+        with pytest.raises(OpenRouterError, match="bad request"):
+            await client.chat_completion([{"role": "user", "content": "hello"}])
+
+    assert route.call_count == 1

@@ -47,6 +47,7 @@ async def main() -> None:
         api_key=settings.openrouter_api_key_value,
         base_url=settings.openrouter_base_url,
         chat_model=settings.openrouter_chat_model,
+        chat_fallback_models=settings.openrouter_chat_fallback_models,
         stt_model=settings.openrouter_stt_model,
         tts_model=settings.openrouter_tts_model,
         tts_voice=settings.openrouter_tts_voice,

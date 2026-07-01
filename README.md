@@ -51,11 +51,16 @@ ALLOWED_TELEGRAM_USER_IDS=123456789,987654321
 Telegram usernames are not supported in this setting because the bot checks Telegram's stable numeric
 `from_user.id`.
 
-The default chat model is configured as an explicit free non-Chinese OpenRouter model:
+The default chat model is a low-cost paid OpenRouter model. This avoids the tighter `:free`
+model request limits that can cause chat replies to fail with `429 Too Many Requests`:
 
 ```env
-OPENROUTER_CHAT_MODEL=openai/gpt-oss-120b:free
+OPENROUTER_CHAT_MODEL=openai/gpt-4o-mini
+OPENROUTER_CHAT_FALLBACK_MODELS=google/gemini-2.5-flash-lite
 ```
+
+`OPENROUTER_CHAT_FALLBACK_MODELS` is optional and accepts a comma-separated list. The bot tries
+fallback chat models only after retryable OpenRouter failures such as `429` and `5xx`.
 
 STT and TTS may still consume a small OpenRouter credit balance. To switch STT to the cheaper English-oriented alternative:
 

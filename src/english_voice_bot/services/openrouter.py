@@ -16,6 +16,12 @@ class OpenRouterError(RuntimeError):
     """Raised when OpenRouter cannot produce a valid response."""
 
 
+class OpenRouterHTTPError(OpenRouterError):
+    def __init__(self, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class OpenRouterClient:
     def __init__(
         self,
@@ -27,6 +33,7 @@ class OpenRouterClient:
         tts_model: str,
         tts_voice: str,
         tts_speed: float,
+        chat_fallback_models: Sequence[str] = (),
         client: httpx.AsyncClient | None = None,
         timeout: float = 45.0,
         max_retries: int = 2,
@@ -34,7 +41,7 @@ class OpenRouterClient:
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
-        self._chat_model = chat_model
+        self._chat_models = self._build_chat_model_order(chat_model, chat_fallback_models)
         self._stt_model = stt_model
         self._tts_model = tts_model
         self._tts_voice = tts_voice
@@ -68,11 +75,10 @@ class OpenRouterClient:
         temperature: float = 0.7,
     ) -> str:
         payload = {
-            "model": self._chat_model,
             "messages": list(messages),
             "temperature": temperature,
         }
-        data = await self._post_json("/chat/completions", payload)
+        data = await self._post_chat_json(payload)
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
@@ -90,7 +96,6 @@ class OpenRouterClient:
         temperature: float = 0.1,
     ) -> dict[str, Any]:
         payload = {
-            "model": self._chat_model,
             "messages": list(messages),
             "temperature": temperature,
             "response_format": {
@@ -102,7 +107,7 @@ class OpenRouterClient:
                 },
             },
         }
-        data = await self._post_json("/chat/completions", payload)
+        data = await self._post_chat_json(payload)
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
@@ -163,6 +168,26 @@ class OpenRouterClient:
             raise OpenRouterError("OpenRouter returned unexpected JSON")
         return data
 
+    async def _post_chat_json(self, payload: dict[str, Any]) -> dict[str, Any]:
+        for index, model in enumerate(self._chat_models):
+            model_payload = dict(payload)
+            model_payload["model"] = model
+            try:
+                return await self._post_json("/chat/completions", model_payload)
+            except OpenRouterHTTPError as exc:
+                is_last_model = index == len(self._chat_models) - 1
+                if is_last_model or not self._is_retryable_http_status(exc.status_code):
+                    raise
+                logger.warning(
+                    "OpenRouter chat model failed; trying fallback model",
+                    extra={
+                        "model": model,
+                        "fallback_model": self._chat_models[index + 1],
+                        "status_code": exc.status_code,
+                    },
+                )
+        raise OpenRouterError("No OpenRouter chat models configured")
+
     async def _post_bytes(self, path: str, payload: dict[str, Any]) -> bytes:
         response = await self._post(path, payload)
         if not response.content:
@@ -197,10 +222,23 @@ class OpenRouterClient:
                 error_detail = self._format_error_detail(response)
                 if error_detail:
                     message = f"{message}: {error_detail}"
-                raise OpenRouterError(message) from exc
+                raise OpenRouterHTTPError(message, status_code=response.status_code) from exc
             return response
 
         raise OpenRouterError("OpenRouter request failed after retries") from last_error
+
+    @staticmethod
+    def _build_chat_model_order(primary_model: str, fallback_models: Sequence[str]) -> tuple[str, ...]:
+        ordered_models: list[str] = []
+        for model in (primary_model, *fallback_models):
+            normalized_model = model.strip()
+            if normalized_model and normalized_model not in ordered_models:
+                ordered_models.append(normalized_model)
+        return tuple(ordered_models)
+
+    @staticmethod
+    def _is_retryable_http_status(status_code: int) -> bool:
+        return status_code == 429 or 500 <= status_code <= 599
 
     @staticmethod
     def _format_error_detail(response: httpx.Response) -> str:
