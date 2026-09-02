@@ -208,7 +208,9 @@ class OpenRouterClient:
                 if attempt < self._max_retries:
                     await self._sleep_before_retry(attempt, path, "network_error")
                     continue
-                raise OpenRouterError("OpenRouter request failed") from exc
+                raise OpenRouterError(
+                    f"OpenRouter request to {path} failed after retries: {type(exc).__name__}"
+                ) from exc
 
             if response.status_code in {429} or 500 <= response.status_code <= 599:
                 if attempt < self._max_retries:
@@ -225,7 +227,8 @@ class OpenRouterClient:
                 raise OpenRouterHTTPError(message, status_code=response.status_code) from exc
             return response
 
-        raise OpenRouterError("OpenRouter request failed after retries") from last_error
+        error_type = type(last_error).__name__ if last_error is not None else "unknown error"
+        raise OpenRouterError(f"OpenRouter request to {path} failed after retries: {error_type}") from last_error
 
     @staticmethod
     def _build_chat_model_order(primary_model: str, fallback_models: Sequence[str]) -> tuple[str, ...]:
@@ -260,8 +263,11 @@ class OpenRouterClient:
     async def _sleep_before_retry(self, attempt: int, path: str, reason: str) -> None:
         delay = self._retry_base_delay * (2**attempt)
         logger.warning(
-            "Retrying OpenRouter request",
-            extra={"path": path, "attempt": attempt + 1, "reason": reason, "delay": delay},
+            "Retrying OpenRouter request path=%s attempt=%s reason=%s delay=%.2fs",
+            path,
+            attempt + 1,
+            reason,
+            delay,
         )
         if delay > 0:
             await asyncio.sleep(delay)

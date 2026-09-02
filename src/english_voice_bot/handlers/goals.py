@@ -257,6 +257,7 @@ async def goal_reminders_callback(
             action=PENDING_ACTION_GOAL_REMINDER_SETUP,
         )
         await db.commit()
+    await _safe_remove_inline_keyboard(callback.message)
     await callback.message.answer(GOAL_REMINDER_SETUP_PROMPT)
 
 
@@ -371,3 +372,10 @@ async def _safe_edit_status(status: Message, text: str, **kwargs: object) -> Non
         await status.edit_text(text, **kwargs)
     except TelegramAPIError:
         await status.answer(text, **kwargs)
+
+
+async def _safe_remove_inline_keyboard(message: Message) -> None:
+    try:
+        await message.edit_reply_markup(reply_markup=None)
+    except TelegramAPIError:
+        logger.debug("Could not remove goal reminder inline keyboard", exc_info=True)

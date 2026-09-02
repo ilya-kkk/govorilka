@@ -16,6 +16,7 @@ A personal Telegram bot for practicing spoken English. Send a voice message, get
 - Background Telegram reminders for saved practice schedules.
 - Practice activity tracking with `/showresults`.
 - Speaking-practice goals with `/setgoal`, `/goalstatus`, and progress reminders.
+- Separate vocabulary bot that keeps one daily word list message and exports it to Anki `.apkg`.
 - Local SQLite persistence with SQLAlchemy async API.
 - No permanent audio storage.
 
@@ -39,6 +40,7 @@ Fill in:
 
 ```env
 TELEGRAM_BOT_TOKEN=your-telegram-token
+VOCAB_BOT_TOKEN=your-vocabulary-telegram-token
 OPENROUTER_API_KEY=your-openrouter-api-key
 ```
 
@@ -83,6 +85,23 @@ REMINDER_CHECK_INTERVAL_SECONDS=30
 REMINDER_PARSE_MAX_ATTEMPTS=3
 GOAL_PARSE_MAX_ATTEMPTS=3
 ```
+
+The vocabulary bot sends a daily word-list message at 10:00 Moscow time by default. It uses the
+same `OPENROUTER_API_KEY` to translate words when you press `Скачать .apkg`:
+
+```env
+VOCAB_BOT_TOKEN=your-vocabulary-telegram-token
+VOCAB_DATABASE_URL=sqlite+aiosqlite:///./data/vocab_bot.sqlite3
+VOCAB_TIMEZONE=Europe/Moscow
+VOCAB_DAILY_HOUR=10
+VOCAB_DAILY_MINUTE=0
+VOCAB_DECK_NAME=English Vocabulary
+```
+
+Start the vocabulary bot with `/start` once so Telegram allows the bot to message you. After that,
+send English words or phrases as normal text. The bot deletes your input message, edits the daily
+list, and the `Скачать .apkg` button returns an Anki deck with `Front` as English and `Back` as the
+Russian translation.
 
 Practice questions for the `❓` button are loaded into SQLite on startup from `./questions.json`:
 
@@ -200,6 +219,12 @@ View logs:
 
 ```bash
 docker compose logs -f bot
+```
+
+For the vocabulary bot:
+
+```bash
+docker compose logs -f vocab-bot
 ```
 
 Stop it:

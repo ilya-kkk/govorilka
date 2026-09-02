@@ -9,6 +9,21 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-    restart: unless-stopped
+    # restart: unless-stopped
+    init: true
+    stop_grace_period: 20s
+
+  vocab-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: english-voice-bot:local
+    container_name: english-vocab-bot
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    command: ["english-vocab-bot"]
+    # restart: unless-stopped
     init: true
     stop_grace_period: 20s
